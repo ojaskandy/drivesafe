@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.log
+.env
+*.mp4
+*.avi
+*.mov
+*.pt
+models/
+outputs/
+detected_traffic_lights/
+Traffic-Light-Detection-Using-YOLOv3/
+
+# Keep only one copy of model file
+models/traffic_light/best_traffic_small_yolo.pt
+drivesafe/models/traffic_light/best_traffic_small_yolo.pt
+drivesafe/best_traffic_small_yolo.pt
+# Keep the root copy as the main one
+# best_traffic_small_yolo.pt 
