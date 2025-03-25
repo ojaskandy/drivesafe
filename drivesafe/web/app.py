@@ -79,25 +79,33 @@ def init_yolo_model():
         
         # Load model directly - try both development and production paths
         model_paths = [
-            os.path.join('drivesafe', 'models', 'traffic_light', 'best_traffic_small_yolo.pt'),
+            'best_traffic_small_yolo.pt',
             os.path.join('models', 'traffic_light', 'best_traffic_small_yolo.pt'),
-            'best_traffic_small_yolo.pt'
+            os.path.join('drivesafe', 'models', 'traffic_light', 'best_traffic_small_yolo.pt'),
+            '/app/best_traffic_small_yolo.pt',
+            '/app/models/traffic_light/best_traffic_small_yolo.pt'
         ]
         
         model_loaded = False
+        last_error = None
+        
         for model_path in model_paths:
-            if os.path.exists(model_path):
-                try:
+            try:
+                if os.path.exists(model_path):
+                    logger.info(f"Attempting to load model from: {model_path}")
                     yolo_model = YOLO(model_path)
                     logger.info(f"YOLO model loaded successfully from {model_path}")
                     model_loaded = True
                     break
-                except Exception as e:
-                    logger.error(f"Failed to load model from {model_path}: {str(e)}")
-                    continue
+                else:
+                    logger.warning(f"Model path does not exist: {model_path}")
+            except Exception as e:
+                last_error = e
+                logger.error(f"Failed to load model from {model_path}: {str(e)}")
+                continue
         
         if not model_loaded:
-            logger.error("Could not find or load model from any of the expected paths")
+            logger.error(f"Could not load model from any path. Last error: {str(last_error)}")
             return None
             
         return yolo_model
@@ -191,34 +199,54 @@ def process_image():
     try:
         # Ensure dependencies are initialized
         if not initialize_dependencies():
+            logger.error("Failed to initialize dependencies")
             return jsonify({'error': 'Failed to initialize dependencies'}), 500
             
         # Get the image data from the request
         data = request.json
         if not data or 'image' not in data:
+            logger.error("No image data received")
             return jsonify({'error': 'No image data received'}), 400
         
-        # Decode the base64 image
-        image_data = data['image'].split(',')[1]
-        image_bytes = base64.b64decode(image_data)
-        np_arr = np.frombuffer(image_bytes, np.uint8)
-        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        try:
+            # Decode the base64 image
+            image_data = data['image'].split(',')[1]
+            image_bytes = base64.b64decode(image_data)
+            np_arr = np.frombuffer(image_bytes, np.uint8)
+            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            
+            if frame is None:
+                logger.error("Failed to decode image")
+                return jsonify({'error': 'Failed to decode image'}), 400
+                
+        except Exception as e:
+            logger.error(f"Error decoding image: {str(e)}")
+            return jsonify({'error': f'Error decoding image: {str(e)}'}), 400
         
         # Process the frame
-        processed_frame, status, current_detections = process_frame(frame)
-        
-        # Encode the processed frame back to base64
-        _, buffer = cv2.imencode('.jpg', processed_frame)
-        processed_image = base64.b64encode(buffer).decode('utf-8')
-        
-        # Return the processed image and detection information
-        return jsonify({
-            'processed_image': f'data:image/jpeg;base64,{processed_image}',
-            'detection_status': status,
-            'model_loaded': yolo_model is not None,
-            'detections': detected_classes,
-            'current_detections': current_detections
-        })
+        try:
+            processed_frame, status, current_detections = process_frame(frame)
+            
+            if processed_frame is None:
+                logger.error("Failed to process frame")
+                return jsonify({'error': 'Failed to process frame'}), 500
+                
+            # Encode the processed frame back to base64
+            _, buffer = cv2.imencode('.jpg', processed_frame)
+            processed_image = base64.b64encode(buffer).decode('utf-8')
+            
+            # Return the processed image and detection information
+            return jsonify({
+                'processed_image': f'data:image/jpeg;base64,{processed_image}',
+                'detection_status': status,
+                'model_loaded': yolo_model is not None,
+                'detections': detected_classes,
+                'current_detections': current_detections
+            })
+            
+        except Exception as e:
+            logger.error(f"Error processing frame: {str(e)}")
+            return jsonify({'error': f'Error processing frame: {str(e)}'}), 500
         
     except Exception as e:
         logger.error(f"Error in process_frame endpoint: {str(e)}")
@@ -259,10 +287,15 @@ def model_status():
 
 if __name__ == '__main__':
     # Initialize dependencies at startup
-    initialize_dependencies()
+    if not initialize_dependencies():
+        logger.error("Failed to initialize dependencies. Exiting.")
+        sys.exit(1)
     
-    # Initialize model at startup in development
-    if os.environ.get('FLASK_ENV') != 'production':
-        yolo_model = init_yolo_model()
+    # Initialize model at startup
+    if not init_yolo_model():
+        logger.error("Failed to initialize YOLO model. Exiting.")
+        sys.exit(1)
         
-    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000))) 
+    # Start the Flask app
+    port = int(os.environ.get('PORT', 5000))
+    app.run(debug=True, host='0.0.0.0', port=port) 

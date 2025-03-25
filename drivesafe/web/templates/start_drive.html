@@ -3,18 +3,30 @@
 {% block title %}Start Drive{% endblock %}
 
 {% block content %}
-<div class="container mt-4">
+<div class="container-fluid mt-4">
     <div class="row">
-        <div class="col-md-8 mb-4">
-            <div class="card shadow">
+        <div class="col-md-6 mb-4">
+            <div class="card shadow h-100">
                 <div class="card-header d-flex justify-content-between align-items-center">
-                    <h3 class="mb-0">Camera Feed</h3>
+                    <h3 class="mb-0">Live Camera Feed</h3>
                     <span id="connection-status" class="badge bg-secondary">Initializing</span>
                 </div>
                 <div class="card-body p-0 position-relative">
                     <div id="video-container" class="ratio ratio-16x9">
                         <video id="camera-feed" class="w-100" autoplay playsinline></video>
-                        <div id="detection-overlay" class="position-absolute top-0 start-0 w-100 h-100" style="display: none;">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6 mb-4">
+            <div class="card shadow h-100">
+                <div class="card-header">
+                    <h3 class="mb-0">Detection View</h3>
+                </div>
+                <div class="card-body p-0 position-relative">
+                    <div id="detection-container" class="ratio ratio-16x9">
+                        <div id="detection-overlay" class="w-100 h-100" style="display: none;">
                             <img id="processed-image" class="w-100 h-100" style="object-fit: cover;" />
                         </div>
                         <div id="loading-overlay" class="position-absolute top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center bg-dark bg-opacity-50" style="display: none;">
@@ -24,7 +36,14 @@
                         </div>
                     </div>
                 </div>
-                <div class="card-footer">
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card shadow mb-4">
+                <div class="card-body">
                     <div id="status-message" class="alert alert-info mb-3">
                         Camera not started. Click "Start Camera" to begin.
                     </div>
@@ -42,7 +61,7 @@
                 </div>
             </div>
         </div>
-        
+
         <div class="col-md-4">
             <div class="card shadow mb-4">
                 <div class="card-header">
@@ -124,7 +143,6 @@
         const statusMessage = document.getElementById('status-message');
         const connectionStatus = document.getElementById('connection-status');
         const videoElement = document.getElementById('camera-feed');
-        const videoContainer = document.getElementById('video-container');
         const detectionOverlay = document.getElementById('detection-overlay');
         const processedImage = document.getElementById('processed-image');
         const loadingOverlay = document.getElementById('loading-overlay');
@@ -324,6 +342,7 @@
             stopDetectionBtn.disabled = false;
             statusMessage.textContent = 'Starting detection...';
             statusMessage.className = 'alert alert-info mb-3';
+            detectionOverlay.style.display = 'block';
             
             // Start processing frames
             processingIntervalId = setInterval(processFrame, 100);
