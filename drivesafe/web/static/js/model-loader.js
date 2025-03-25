@@ -6,7 +6,8 @@
  */
 
 // Configuration
-const MODEL_URL = "https://huggingface.co/ojaskandy/traffic-light-detection-yolo/resolve/tfjs/model.json";
+const LOCAL_MODEL_URL = "/static/models/tfjs_model/model.json"; // Local model path in Flask static directory
+const FALLBACK_MODEL_URL = "https://cdn.jsdelivr.net/gh/ojaskandy/traffic-light-detection-yolo@main/tfjs_model/model.json"; // CDN fallback
 const MODEL_CACHE_KEY = "traffic-light-model-v1";
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000; // 2 seconds
@@ -162,16 +163,30 @@ class ModelLoader {
      */
     async downloadModel() {
         try {
-            console.log("Downloading model from server...");
+            console.log("Trying to download model...");
             this.setStatus(STATUS.DOWNLOADING);
             
-            // Download model with progress tracking
-            this.model = await tf.loadGraphModel(MODEL_URL, {
-                onProgress: (fraction) => {
-                    this.progress = Math.round(fraction * 100);
-                    this.notifyListeners();
-                }
-            });
+            // First try to load from local server
+            try {
+                console.log("Trying local model first...");
+                this.model = await tf.loadGraphModel(LOCAL_MODEL_URL, {
+                    onProgress: (fraction) => {
+                        this.progress = Math.round(fraction * 100);
+                        this.notifyListeners();
+                    }
+                });
+                console.log("Local model loaded successfully");
+            } catch (localError) {
+                // If local model fails, try the fallback CDN
+                console.log("Local model failed, trying fallback CDN...", localError);
+                this.model = await tf.loadGraphModel(FALLBACK_MODEL_URL, {
+                    onProgress: (fraction) => {
+                        this.progress = Math.round(fraction * 100);
+                        this.notifyListeners();
+                    }
+                });
+                console.log("Fallback model loaded successfully");
+            }
             
             // Cache the model for future use
             try {

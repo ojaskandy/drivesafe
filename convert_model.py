@@ -17,6 +17,7 @@ import sys
 import logging
 import argparse
 from pathlib import Path
+import shutil
 
 # Configure logging
 logging.basicConfig(
@@ -88,8 +89,21 @@ def convert_yolo_to_tfjs(model_path, output_dir):
             tfjs_model_dir
         )
         logger.info(f"TensorFlow.js model saved to {tfjs_model_dir}")
+        
+        # Step 4: Copy model to web directory for serving
+        web_model_dir = "drivesafe/web/static/models/tfjs_model"
+        os.makedirs(web_model_dir, exist_ok=True)
+        
+        # Copy all files from tfjs_model_dir to web_model_dir
+        for file in os.listdir(tfjs_model_dir):
+            source = os.path.join(tfjs_model_dir, file)
+            destination = os.path.join(web_model_dir, file)
+            if os.path.isfile(source):
+                shutil.copy2(source, destination)
+        
+        logger.info(f"Copied TensorFlow.js model to {web_model_dir} for web serving")
     except Exception as e:
-        logger.error(f"TensorFlow.js conversion failed: {str(e)}")
+        logger.error(f"TensorFlow.js conversion or copy failed: {str(e)}")
         return False
     
     logger.info("Conversion complete! The TensorFlow.js model is ready for use in the browser.")

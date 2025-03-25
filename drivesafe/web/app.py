@@ -5,6 +5,7 @@ import base64
 import numpy as np
 import traceback
 from pathlib import Path
+import shutil
 
 # Configure logging for better debugging
 logging.basicConfig(
@@ -18,16 +19,40 @@ app = Flask(__name__)
 
 # Path to static assets
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
-MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'models')
+STATIC_MODELS_DIR = os.path.join(STATIC_DIR, 'models')
+REPO_MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'models')
 
-# Ensure models directory exists
-os.makedirs(MODELS_DIR, exist_ok=True)
+# Ensure models directories exist
+os.makedirs(STATIC_MODELS_DIR, exist_ok=True)
+os.makedirs(REPO_MODELS_DIR, exist_ok=True)
 
-# Serve model files for client-side loading
-@app.route('/models/<path:filename>')
-def serve_model(filename):
-    """Serve model files from the models directory."""
-    return send_from_directory(MODELS_DIR, filename)
+# If there are models in the repo models directory but not in static, copy them
+def copy_models_to_static():
+    """Copy models from the repository models directory to the static models directory."""
+    try:
+        logger.info("Checking for models to copy to static directory...")
+        
+        # Check if repository has tfjs_model
+        repo_tfjs_dir = os.path.join(REPO_MODELS_DIR, 'tfjs_model')
+        static_tfjs_dir = os.path.join(STATIC_MODELS_DIR, 'tfjs_model')
+        
+        if os.path.exists(repo_tfjs_dir) and not os.path.exists(static_tfjs_dir):
+            logger.info(f"Copying models from {repo_tfjs_dir} to {static_tfjs_dir}")
+            os.makedirs(static_tfjs_dir, exist_ok=True)
+            
+            # Copy all files
+            for file in os.listdir(repo_tfjs_dir):
+                source = os.path.join(repo_tfjs_dir, file)
+                destination = os.path.join(static_tfjs_dir, file)
+                if os.path.isfile(source):
+                    shutil.copy2(source, destination)
+            
+            logger.info("Model files copied successfully")
+    except Exception as e:
+        logger.error(f"Error copying models: {str(e)}")
+
+# Run the copy operation at startup
+copy_models_to_static()
 
 @app.route('/')
 def index():
@@ -47,8 +72,13 @@ def about():
 @app.route('/model_status')
 def get_model_status():
     """Return model status - this is a placeholder since model status is now handled client-side."""
+    # Check if model files exist in static directory
+    model_json_path = os.path.join(STATIC_MODELS_DIR, 'tfjs_model', 'model.json')
+    model_exists = os.path.exists(model_json_path)
+    
     return jsonify({
         "status": "client_side_model",
+        "model_exists": model_exists,
         "message": "Model loading is handled client-side with TensorFlow.js"
     })
 
