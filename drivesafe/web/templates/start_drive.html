@@ -183,19 +183,58 @@
                 const response = await fetch('/model_status');
                 const data = await response.json();
                 
-                if (data.model_loaded && !modelLoaded) {
-                    modelLoaded = true;
-                    modelStatus.textContent = 'Model Ready';
+                // Update model status badge
+                if (data.yolo_loaded) {
+                    modelStatus.textContent = 'YOLO Ready';
                     modelStatus.className = 'badge bg-success';
                     startDetectionBtn.disabled = false;
+                } else if (data.opencv_loaded) {
+                    modelStatus.textContent = 'Lane Detection Only';
+                    modelStatus.className = 'badge bg-warning';
+                    startDetectionBtn.disabled = false;
+                } else {
+                    modelStatus.textContent = 'Detection Unavailable';
+                    modelStatus.className = 'badge bg-danger';
+                    startDetectionBtn.disabled = true;
+                }
+                
+                // Show error messages if any
+                if (data.yolo_error || data.opencv_error || data.last_error) {
+                    let errorMessage = '';
+                    if (data.yolo_error) {
+                        errorMessage += `YOLO Error: ${data.yolo_error}\n`;
+                    }
+                    if (data.opencv_error) {
+                        errorMessage += `OpenCV Error: ${data.opencv_error}\n`;
+                    }
+                    if (data.last_error) {
+                        errorMessage += `Last Error: ${data.last_error}`;
+                    }
+                    console.error('Detection errors:', errorMessage);
+                    
+                    // Update status message with error details
+                    if (!isDetecting) {
+                        statusMessage.innerHTML = `
+                            <strong>Warning:</strong> Some detection features may be limited.<br>
+                            ${data.yolo_loaded ? '✅' : '❌'} Traffic Light Detection<br>
+                            ${data.opencv_loaded ? '✅' : '❌'} Lane Detection<br>
+                            <small class="text-muted">Check console for detailed error messages</small>
+                        `;
+                        statusMessage.className = 'alert alert-warning mb-3';
+                    }
                 }
             } catch (error) {
                 console.error('Error checking model status:', error);
+                modelStatus.textContent = 'Status Error';
+                modelStatus.className = 'badge bg-danger';
             }
         }
         
-        // Start checking model status
-        setInterval(checkModelStatus, 2000);
+        // Start checking model status more frequently initially, then slow down
+        const checkStatusInterval = setInterval(checkModelStatus, 2000);
+        for (let i = 0; i < 5; i++) {
+            setTimeout(checkModelStatus, i * 200);
+        }
         
         // Process a frame from the camera
         async function processFrame() {
@@ -301,10 +340,18 @@
                 if (retryCount >= MAX_RETRIES) {
                     isDetecting = false;
                     stopDetectionBtn.click();
-                    statusMessage.textContent = `Detection stopped due to errors: ${error.message}`;
+                    statusMessage.innerHTML = `
+                        <strong>Detection stopped due to errors:</strong><br>
+                        ${error.message}<br>
+                        <small class="text-muted">Check console for detailed error messages</small>
+                    `;
                     statusMessage.className = 'alert alert-danger mb-3';
                 } else {
-                    statusMessage.textContent = `Error processing frame (retry ${retryCount}/${MAX_RETRIES}): ${error.message}`;
+                    statusMessage.innerHTML = `
+                        <strong>Error processing frame (retry ${retryCount}/${MAX_RETRIES}):</strong><br>
+                        ${error.message}<br>
+                        <small class="text-muted">Check console for detailed error messages</small>
+                    `;
                     statusMessage.className = 'alert alert-warning mb-3';
                 }
             } finally {
