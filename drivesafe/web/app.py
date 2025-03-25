@@ -9,6 +9,7 @@ import numpy as np
 import threading
 from queue import Queue
 import traceback
+import cv2
 
 # Configure logging with more detail
 logging.basicConfig(
@@ -95,7 +96,7 @@ def initialize_dependencies():
         return False
 
 def detect_lanes(frame):
-    """Detect lanes using OpenCV"""
+    """Basic lane detection using OpenCV"""
     try:
         # Convert to grayscale
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -128,9 +129,8 @@ def detect_lanes(frame):
             maxLineGap=20
         )
         
-        # Create result image
+        # Draw lines on the original frame
         result = frame.copy()
-        
         if lines is not None:
             for line in lines:
                 x1, y1, x2, y2 = line[0]
@@ -328,15 +328,8 @@ def start_drive():
     return render_template('start_drive.html')
 
 @app.route('/process_frame', methods=['POST'])
-def process_image():
-    global detected_classes, yolo_model, cv2
-    
+def process_frame():
     try:
-        # Ensure dependencies are initialized
-        if not initialize_dependencies():
-            logger.error("Failed to initialize dependencies")
-            return jsonify({'error': 'Failed to initialize dependencies'}), 500
-        
         # Get the image data from the request
         data = request.json
         if not data or 'image' not in data:
@@ -354,41 +347,34 @@ def process_image():
                 logger.error("Failed to decode image")
                 return jsonify({'error': 'Failed to decode image'}), 400
             
-        except Exception as e:
-            logger.error(f"Error decoding image: {str(e)}")
-            return jsonify({'error': f'Error decoding image: {str(e)}'}), 400
-        
-        # Process the frame
-        try:
-            processed_frame, status, current_detections = process_frame(frame)
+            # Resize frame for faster processing
+            frame = cv2.resize(frame, (640, 480))
             
-            if processed_frame is None:
-                logger.error("Failed to process frame")
-                return jsonify({'error': 'Failed to process frame'}), 500
+            # Process frame with lane detection
+            processed_frame, num_lanes = detect_lanes(frame)
             
             # Encode the processed frame back to base64
             _, buffer = cv2.imencode('.jpg', processed_frame)
             processed_image = base64.b64encode(buffer).decode('utf-8')
             
-            # Return the processed image and detection information
+            # Return the results
             return jsonify({
                 'processed_image': f'data:image/jpeg;base64,{processed_image}',
-                'detection_status': status,
-                'model_loaded': yolo_model is not None,
-                'detections': detected_classes,
-                'current_detections': current_detections
+                'detection_status': f"Lane detection active ({num_lanes} lanes)" if num_lanes > 0 else "No lanes detected",
+                'model_loaded': True,
+                'detections': {'red': 0, 'yellow': 0, 'green': 0, 'none': 0},
+                'current_detections': {'red': 0, 'yellow': 0, 'green': 0, 'none': 0}
             })
             
         except Exception as e:
-            logger.error(f"Error processing frame: {str(e)}")
-            return jsonify({'error': f'Error processing frame: {str(e)}'}), 500
-        
+            error_msg = f"Error processing frame: {str(e)}\n{traceback.format_exc()}"
+            logger.error(error_msg)
+            return jsonify({'error': error_msg}), 500
+            
     except Exception as e:
-        logger.error(f"Error in process_frame endpoint: {str(e)}")
-        return jsonify({
-            'error': str(e),
-            'model_loaded': yolo_model is not None
-        }), 500
+        error_msg = f"Error in process_frame endpoint: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        return jsonify({'error': error_msg}), 500
 
 @app.route('/stats', methods=['GET'])
 def get_stats():
@@ -414,15 +400,13 @@ def reset_stats():
 
 @app.route('/model_status', methods=['GET'])
 def get_model_status():
-    """Get detailed model status information"""
-    global model_status
-    
+    """Get model status - for now, just OpenCV"""
     return jsonify({
-        'yolo_loaded': model_status['yolo_loaded'],
-        'yolo_error': model_status['yolo_error'],
-        'opencv_loaded': model_status['opencv_loaded'],
-        'opencv_error': model_status['opencv_error'],
-        'last_error': model_status['last_error']
+        'yolo_loaded': False,
+        'yolo_error': "YOLO model temporarily disabled",
+        'opencv_loaded': True,
+        'opencv_error': None,
+        'last_error': None
     })
 
 if __name__ == '__main__':

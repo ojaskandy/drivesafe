@@ -181,16 +181,15 @@
         async function checkModelStatus() {
             try {
                 const response = await fetch('/model_status');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
                 const data = await response.json();
                 
                 // Update model status badge
-                if (data.yolo_loaded) {
-                    modelStatus.textContent = 'YOLO Ready';
+                if (data.opencv_loaded) {
+                    modelStatus.textContent = 'Lane Detection Ready';
                     modelStatus.className = 'badge bg-success';
-                    startDetectionBtn.disabled = false;
-                } else if (data.opencv_loaded) {
-                    modelStatus.textContent = 'Lane Detection Only';
-                    modelStatus.className = 'badge bg-warning';
                     startDetectionBtn.disabled = false;
                 } else {
                     modelStatus.textContent = 'Detection Unavailable';
@@ -199,11 +198,8 @@
                 }
                 
                 // Show error messages if any
-                if (data.yolo_error || data.opencv_error || data.last_error) {
+                if (data.opencv_error || data.last_error) {
                     let errorMessage = '';
-                    if (data.yolo_error) {
-                        errorMessage += `YOLO Error: ${data.yolo_error}\n`;
-                    }
                     if (data.opencv_error) {
                         errorMessage += `OpenCV Error: ${data.opencv_error}\n`;
                     }
@@ -216,7 +212,6 @@
                     if (!isDetecting) {
                         statusMessage.innerHTML = `
                             <strong>Warning:</strong> Some detection features may be limited.<br>
-                            ${data.yolo_loaded ? '✅' : '❌'} Traffic Light Detection<br>
                             ${data.opencv_loaded ? '✅' : '❌'} Lane Detection<br>
                             <small class="text-muted">Check console for detailed error messages</small>
                         `;
@@ -296,26 +291,11 @@
                     detectionOverlay.style.display = 'block';
                 }
                 
-                // Update detection status with more detail
+                // Update detection status
                 if (data.detection_status) {
                     detectionStatus.textContent = data.detection_status;
-                }
-                
-                // Update stats with animation
-                if (data.detections) {
-                    animateCounter(redCount, parseInt(redCount.textContent), data.detections.red);
-                    animateCounter(yellowCount, parseInt(yellowCount.textContent), data.detections.yellow);
-                    animateCounter(greenCount, parseInt(greenCount.textContent), data.detections.green);
-                }
-                
-                // Update current detections
-                if (data.current_detections) {
-                    redCurrent.textContent = data.current_detections.red;
-                    yellowCurrent.textContent = data.current_detections.yellow;
-                    greenCurrent.textContent = data.current_detections.green;
-                    
-                    // Set status message based on current detections
-                    updateStatusMessage(data.current_detections, data.detection_status);
+                    statusMessage.textContent = data.detection_status;
+                    statusMessage.className = 'alert alert-success mb-3';
                 }
                 
                 // Calculate and display processing time
