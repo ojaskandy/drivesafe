@@ -259,12 +259,15 @@ class ModelLoader {
      */
     async detectTrafficLights(videoElement) {
         // If we're in simulation mode or model isn't ready, return empty results instead of simulating
-        if (this.useSimulation || this.status !== STATUS.READY) {
+        if (this.status !== STATUS.READY) {
+            console.log("Model not ready, returning empty results");
             // Return empty results instead of simulation to avoid false detections
             return {
                 detections: [],
                 counts: { red: 0, yellow: 0, green: 0, unknown: 0 },
-                simulated: false
+                simulated: false,
+                modelStatus: this.status,
+                error: this.error
             };
         }
         
@@ -273,20 +276,33 @@ class ModelLoader {
             try {
                 const result = await this.processFrameWithServer(videoElement);
                 console.log("Server-side processing result:", result);
-                return result;
+                return {
+                    ...result,
+                    modelStatus: this.status,
+                    error: this.error
+                };
             } catch (serverError) {
                 console.error("Server-side processing failed, falling back to client-side:", serverError);
                 
                 // If server fails, try client-side processing with TF.js
-                return await this.processFrameWithTensorflow(videoElement);
+                const result = await this.processFrameWithTensorflow(videoElement);
+                return {
+                    ...result,
+                    modelStatus: this.status,
+                    error: this.error
+                };
             }
         } catch (err) {
             console.error("Error during traffic light detection:", err);
+            this.setStatus(STATUS.ERROR, err.message);
+            
             // On any error, return empty results instead of simulation
             return {
                 detections: [],
                 counts: { red: 0, yellow: 0, green: 0, unknown: 0 },
-                simulated: false
+                simulated: false,
+                modelStatus: this.status,
+                error: this.error
             };
         }
     }
@@ -350,6 +366,12 @@ class ModelLoader {
      * Process a frame using client-side TensorFlow.js
      */
     async processFrameWithTensorflow(videoElement) {
+        // Attempt to use the TensorFlow model directly
+        if (!this.model) {
+            console.error("Model not loaded");
+            throw new Error("Model not loaded");
+        }
+        
         // Convert the video frame to a tensor
         const tensor = tf.tidy(() => {
             // Start with pixel data as in the range 0-255
@@ -697,16 +719,13 @@ class ModelLoader {
      * Notify all listeners of status change
      */
     notifyListeners() {
-        const status = {
-            status: this.status,
-            progress: this.progress,
-            error: this.error,
-            simulation: this.useSimulation
-        };
-        
         this.statusListeners.forEach(listener => {
             try {
-                listener(status);
+                listener({
+                    status: this.status,
+                    progress: this.progress,
+                    error: this.error
+                });
             } catch (err) {
                 console.error("Error in status listener:", err);
             }
