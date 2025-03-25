@@ -1,16 +1,12 @@
 services:
   - type: web
     name: drivesafe
-    runtime: python
-    plan: free
-    region: oregon
+    env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: cd drivesafe && gunicorn web_app:app --bind 0.0.0.0:$PORT --log-level debug
+    startCommand: gunicorn app:app
     envVars:
       - key: PYTHON_VERSION
-        value: 3.9.12
-      - key: PYTHONUNBUFFERED
-        value: true
+        value: 3.9.7
     healthCheckPath: /
     autoDeploy: true
     branch: main
