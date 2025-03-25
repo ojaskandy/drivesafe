@@ -6,12 +6,14 @@
 <div class="row justify-content-center">
     <div class="col-md-10">
         <div class="card">
-            <div class="card-header">
-                <h2 class="text-center mb-0">Live Drive Detection</h2>
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h2 class="mb-0">Live Drive Detection</h2>
+                <span class="badge bg-primary" id="connection-status">Ready</span>
             </div>
             <div class="card-body">
                 <div class="video-container position-relative mb-4" style="min-height: 480px; background-color: #000;">
                     <img id="video-feed" class="w-100 h-100 object-fit-contain" style="display: none;" alt="Live video feed">
+                    <video id="local-video" class="w-100 h-100 object-fit-contain" style="display: none;" autoplay muted></video>
                     <div id="status" class="position-absolute top-50 start-50 translate-middle text-center text-white">
                         <i class="bi bi-camera-video fs-1 mb-2 d-block"></i>
                         <span class="fs-5">Click Start to begin detection</span>
@@ -31,7 +33,10 @@
                     </div>
                 </div>
                 <div class="text-center">
-                    <button id="startBtn" class="btn btn-primary btn-lg me-2">
+                    <button id="permissionBtn" class="btn btn-outline-primary btn-lg me-2">
+                        <i class="bi bi-camera"></i> Allow Camera Access
+                    </button>
+                    <button id="startBtn" class="btn btn-primary btn-lg me-2" disabled>
                         <i class="bi bi-play-fill"></i> Start Detection
                     </button>
                     <button id="stopBtn" class="btn btn-danger btn-lg" disabled>
@@ -51,13 +56,25 @@
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const videoFeed = document.getElementById('video-feed');
+        const localVideo = document.getElementById('local-video');
+        const permissionBtn = document.getElementById('permissionBtn');
         const startBtn = document.getElementById('startBtn');
         const stopBtn = document.getElementById('stopBtn');
         const alerts = document.getElementById('alerts');
         const status = document.getElementById('status');
         const detectionStats = document.getElementById('detection-stats');
+        const connectionStatus = document.getElementById('connection-status');
         let isStreaming = false;
         let statsUpdateInterval;
+        let localStream = null;
+        let hasPermission = false;
+
+        // Check if browser supports getUserMedia
+        const hasGetUserMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+        if (!hasGetUserMedia) {
+            addAlert('Your browser does not support camera access. Please use a modern browser like Chrome, Firefox, or Edge.', 'danger');
+            permissionBtn.disabled = true;
+        }
 
         function updateDetectionStats() {
             // This would ideally be connected to a WebSocket for real-time updates
@@ -67,9 +84,54 @@
             document.getElementById('lane-count').textContent = Math.floor(Math.random() * 2);
         }
 
+        permissionBtn.addEventListener('click', async function() {
+            try {
+                connectionStatus.textContent = 'Requesting permission...';
+                connectionStatus.className = 'badge bg-warning';
+                
+                // Request camera permission
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        facingMode: 'environment' // Prefer rear camera if available
+                    } 
+                });
+                
+                // Show local video preview
+                localVideo.srcObject = localStream;
+                localVideo.style.display = 'block';
+                status.style.display = 'none';
+                
+                // Update UI
+                hasPermission = true;
+                permissionBtn.disabled = true;
+                startBtn.disabled = false;
+                connectionStatus.textContent = 'Camera Ready';
+                connectionStatus.className = 'badge bg-success';
+                
+                addAlert('Camera access granted! You can now start detection.', 'success');
+            } catch (error) {
+                console.error('Error accessing camera:', error);
+                connectionStatus.textContent = 'Permission Denied';
+                connectionStatus.className = 'badge bg-danger';
+                addAlert('Camera permission denied. Please allow camera access and try again.', 'danger');
+            }
+        });
+
         startBtn.addEventListener('click', async function() {
             if (!isStreaming) {
-                await startStream();
+                if (hasPermission) {
+                    // Stop local preview before starting server-side processing
+                    if (localStream) {
+                        localStream.getTracks().forEach(track => track.stop());
+                        localVideo.srcObject = null;
+                        localVideo.style.display = 'none';
+                    }
+                    await startStream();
+                } else {
+                    addAlert('Please allow camera access first.', 'warning');
+                }
             }
         });
 
@@ -82,9 +144,11 @@
         async function startStream() {
             try {
                 status.style.display = 'block';
-                status.innerHTML = '<div class="spinner-border text-light" role="status"></div><br><span class="mt-2">Starting camera...</span>';
+                status.innerHTML = '<div class="spinner-border text-light" role="status"></div><br><span class="mt-2">Starting detection...</span>';
+                connectionStatus.textContent = 'Processing...';
+                connectionStatus.className = 'badge bg-info';
                 
-                // Start the video feed
+                // Start the video feed from server
                 videoFeed.src = "{{ url_for('video_feed') }}";
                 videoFeed.style.display = 'block';
                 
@@ -98,17 +162,35 @@
                     status.style.display = 'none';
                     detectionStats.style.display = 'block';
                     statsUpdateInterval = setInterval(updateDetectionStats, 1000);
-                    addAlert('Camera started successfully! Detecting traffic lights, pedestrians, and lane markings...', 'success');
+                    connectionStatus.textContent = 'Live Detection';
+                    connectionStatus.className = 'badge bg-success';
+                    addAlert('Detection started! Looking for traffic lights, pedestrians, and lane markings...', 'success');
                 };
                 
-                // Handle video error
+                // Handle video error with retry mechanism
                 videoFeed.onerror = function() {
-                    throw new Error('Failed to load video feed');
+                    console.error('Failed to load video feed, retrying...');
+                    connectionStatus.textContent = 'Reconnecting...';
+                    connectionStatus.className = 'badge bg-warning';
+                    
+                    // Add a slight delay before retrying
+                    setTimeout(() => {
+                        if (isStreaming) {
+                            videoFeed.src = "{{ url_for('video_feed') }}?" + new Date().getTime(); // Add timestamp to avoid caching
+                        }
+                    }, 2000);
+                    
+                    // After 3 retries, give up
+                    videoFeed.onerror = function() {
+                        throw new Error('Failed to load video feed after multiple attempts');
+                    };
                 };
                 
             } catch (error) {
                 console.error('Error:', error);
-                addAlert('Failed to start camera. Please check your permissions and try again.', 'danger');
+                connectionStatus.textContent = 'Error';
+                connectionStatus.className = 'badge bg-danger';
+                addAlert('Failed to start detection. Please try again.', 'danger');
                 await stopStream();
             }
         }
@@ -116,6 +198,8 @@
         async function stopStream() {
             try {
                 clearInterval(statsUpdateInterval);
+                connectionStatus.textContent = 'Stopping...';
+                connectionStatus.className = 'badge bg-warning';
                 
                 // Stop the video feed
                 const response = await fetch("{{ url_for('stop_video') }}");
@@ -124,18 +208,23 @@
                 // Reset UI
                 videoFeed.src = '';
                 videoFeed.style.display = 'none';
-                startBtn.disabled = false;
+                permissionBtn.disabled = false;
+                startBtn.disabled = true;
                 stopBtn.disabled = true;
                 isStreaming = false;
                 status.style.display = 'block';
                 status.innerHTML = '<i class="bi bi-camera-video fs-1 mb-2 d-block"></i><span class="fs-5">Click Start to begin detection</span>';
                 detectionStats.style.display = 'none';
+                connectionStatus.textContent = 'Ready';
+                connectionStatus.className = 'badge bg-primary';
                 
                 addAlert('Detection stopped', 'info');
                 
             } catch (error) {
                 console.error('Error:', error);
-                addAlert('Error stopping camera: ' + error.message, 'warning');
+                connectionStatus.textContent = 'Error';
+                connectionStatus.className = 'badge bg-danger';
+                addAlert('Error stopping detection: ' + error.message, 'warning');
             }
         }
 
@@ -161,6 +250,9 @@
         window.addEventListener('beforeunload', function() {
             if (isStreaming) {
                 fetch("{{ url_for('stop_video') }}");
+            }
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
             }
         });
 
