@@ -2,14 +2,14 @@ services:
   - type: web
     name: drivesafe
     env: python
-    buildCommand: ./build.sh
-    startCommand: cd drivesafe && gunicorn web_app:app --bind 0.0.0.0:$PORT --timeout 120
-    plan: free
-    branch: main
-    healthCheckPath: /
+    buildCommand: cd drivesafe && pip install -r requirements.txt
+    startCommand: cd drivesafe && FLASK_ENV=production gunicorn web.app:app --bind 0.0.0.0:$PORT --timeout 120
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.7
+      - key: PYTHONPATH
+        value: .
+    healthCheckPath: /
     autoDeploy: true
     previewFeatureFlags:
       - assetsPreserved
