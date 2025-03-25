@@ -36,7 +36,7 @@ def download_model():
         
         if not os.path.exists(model_path):
             logger.info("Downloading model from Hugging Face...")
-            response = requests.get(HUGGINGFACE_MODEL_URL, stream=True)
+            response = requests.get(HUGGINGFACE_MODEL_URL, stream=True, timeout=30)  # Add 30 second timeout
             response.raise_for_status()
             
             total_size = int(response.headers.get('content-length', 0))
@@ -162,15 +162,26 @@ def process_frame():
             logger.debug("Successfully decoded image")
         except Exception as e:
             logger.error(f"Error decoding image: {str(e)}")
-            return jsonify({'error': 'Invalid image data'})
+            logger.error(traceback.format_exc())
+            return jsonify({
+                'error': 'Invalid image data',
+                'detail': str(e)
+            })
         
         if frame is None:
             logger.error("Failed to decode image")
             return jsonify({'error': 'Invalid image data'})
         
+        # Create a backup copy of the original frame
+        original_frame = frame.copy()
+        
         # Resize frame for faster processing
-        frame = cv2.resize(frame, (640, 480))
-        logger.debug("Resized frame to 640x480")
+        try:
+            frame = cv2.resize(frame, (640, 480))
+            logger.debug("Resized frame to 640x480")
+        except Exception as e:
+            logger.error(f"Error resizing frame: {str(e)}")
+            frame = original_frame  # Use original if resize fails
         
         # Initialize status tracking
         detection_status = []
@@ -189,26 +200,38 @@ def process_frame():
                 yolo_error = str(e)
                 logger.error(f"Error in YOLO detection: {str(e)}")
                 logger.error(traceback.format_exc())
+                # Use the original frame on YOLO failure
+                processed_frame = frame.copy()
         
-        # Try lane detection
+        # Always try lane detection, even if other steps fail
         try:
-            if yolo_model is None:
-                # If YOLO failed, use original frame for lane detection
-                processed_frame, num_lanes = detect_lanes(frame)
-            else:
-                # If YOLO succeeded, add lanes to the YOLO-processed frame
-                processed_frame, num_lanes = detect_lanes(processed_frame)
-                
+            # If YOLO failed, we're already using the original frame
+            # Just process with lane detection
+            lane_frame, num_lanes = detect_lanes(processed_frame)
+            processed_frame = lane_frame  # Always use the lane detection result
+            
             if num_lanes > 0:
                 detection_status.append(f"Lane detection active ({num_lanes} lanes)")
+            else:
+                detection_status.append("Lane detection active (no lanes detected)")
         except Exception as e:
             lane_error = str(e)
             logger.error(f"Error in lane detection: {str(e)}")
             logger.error(traceback.format_exc())
         
+        # If all detections fail, still return the original frame
+        if not detection_status:
+            processed_frame = frame
+        
         # Convert processed frame back to base64
-        _, buffer = cv2.imencode('.jpg', processed_frame)
-        img_base64 = base64.b64encode(buffer).decode('utf-8')
+        try:
+            _, buffer = cv2.imencode('.jpg', processed_frame)
+            img_base64 = base64.b64encode(buffer).decode('utf-8')
+        except Exception as e:
+            logger.error(f"Error encoding processed image: {str(e)}")
+            # Try encoding the original frame as a fallback
+            _, buffer = cv2.imencode('.jpg', original_frame)
+            img_base64 = base64.b64encode(buffer).decode('utf-8')
         
         # Prepare status message
         if not detection_status:
@@ -231,16 +254,26 @@ def process_frame():
 @app.route('/model_status')
 def get_model_status():
     """Get the status of both detection systems."""
+    opencv_status = False
+    opencv_error = None
+    
     try:
-        # Test OpenCV
+        # Test OpenCV with a more reliable method
         test_img = np.zeros((100, 100, 3), dtype=np.uint8)
+        # Simple drawing operations
         cv2.line(test_img, (0, 0), (99, 99), (255, 255, 255), 2)
+        cv2.rectangle(test_img, (25, 25), (75, 75), (0, 255, 0), 2)
+        
+        # Simple image processing operations
+        gray = cv2.cvtColor(test_img, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        
         opencv_status = True
-        opencv_error = None
+        logger.debug("OpenCV test successful")
     except Exception as e:
-        opencv_status = False
         opencv_error = str(e)
         logger.error(f"OpenCV test failed: {str(e)}")
+        logger.error(traceback.format_exc())
     
     return jsonify({
         'opencv_loaded': opencv_status,
