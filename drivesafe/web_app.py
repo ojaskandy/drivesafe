@@ -16,7 +16,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
+# Set up Flask with the correct template folder
+app = Flask(__name__, 
+            template_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web/templates'),
+            static_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web/static'))
 
 # Constants
 HUGGINGFACE_MODEL_URL = "https://huggingface.co/ojaskandy/traffic-light-detection-yolo/resolve/main/best_traffic_small_yolo.pt"
@@ -137,11 +140,23 @@ def detect_lanes(frame):
 
 @app.route('/')
 def home():
+    logger.debug("Rendering index.html")
     return render_template('index.html')
 
 @app.route('/start_drive')
 def start_drive():
+    logger.debug("Rendering start_drive.html")
     return render_template('start_drive.html')
+
+@app.route('/upload_drive')
+def upload_drive():
+    logger.debug("Rendering upload_drive.html")
+    return render_template('upload_drive.html')
+
+@app.route('/upload')
+def upload():
+    logger.debug("Rendering upload.html")
+    return render_template('upload.html')
 
 @app.route('/process_frame', methods=['POST'])
 def process_frame():
