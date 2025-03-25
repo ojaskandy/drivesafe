@@ -7,7 +7,7 @@
 
 // Configuration
 const LOCAL_MODEL_URL = "/static/models/tfjs_model/model.json"; // Local model path in Flask static directory
-const FALLBACK_MODEL_URL = "https://cdn.jsdelivr.net/gh/ojaskandy/traffic-light-detection-yolo@main/tfjs_model/model.json"; // CDN fallback
+const FALLBACK_MODEL_URL = "https://storage.googleapis.com/tfjs-models/tfjs/mobilenet_v1_0.25_224/model.json"; // Using Google's hosted model as fallback
 const MODEL_CACHE_KEY = "traffic-light-model-v1";
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000; // 2 seconds
