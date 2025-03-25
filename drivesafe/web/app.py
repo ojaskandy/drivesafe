@@ -77,14 +77,29 @@ def init_yolo_model():
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logger.info(f"Using device: {device}")
         
-        # Load model directly
-        model_path = os.path.join('drivesafe', 'models', 'traffic_light', 'best_traffic_small_yolo.pt')
-        if not os.path.exists(model_path):
-            logger.error(f"Model file not found at {model_path}")
+        # Load model directly - try both development and production paths
+        model_paths = [
+            os.path.join('drivesafe', 'models', 'traffic_light', 'best_traffic_small_yolo.pt'),
+            os.path.join('models', 'traffic_light', 'best_traffic_small_yolo.pt'),
+            'best_traffic_small_yolo.pt'
+        ]
+        
+        model_loaded = False
+        for model_path in model_paths:
+            if os.path.exists(model_path):
+                try:
+                    yolo_model = YOLO(model_path)
+                    logger.info(f"YOLO model loaded successfully from {model_path}")
+                    model_loaded = True
+                    break
+                except Exception as e:
+                    logger.error(f"Failed to load model from {model_path}: {str(e)}")
+                    continue
+        
+        if not model_loaded:
+            logger.error("Could not find or load model from any of the expected paths")
             return None
             
-        yolo_model = YOLO(model_path)
-        logger.info("YOLO model loaded successfully")
         return yolo_model
         
     except Exception as e:
@@ -98,19 +113,29 @@ def process_frame(frame, save_path=None):
     try:
         # Ensure dependencies are initialized
         if not initialize_dependencies():
+            logger.error("Failed to initialize dependencies")
             return frame, "Failed to initialize dependencies", None
             
         # If model is not loaded, try loading it
         if yolo_model is None:
             yolo_model = init_yolo_model()
             if yolo_model is None:
+                logger.error("Model loading failed")
                 return frame, "Model loading failed", None
         
         # Process the frame with the YOLO model
-        results = yolo_model(frame)
+        try:
+            results = yolo_model(frame)
+        except Exception as e:
+            logger.error(f"Error during model inference: {str(e)}")
+            return frame, f"Error during detection: {str(e)}", None
         
         # Get the plotted frame with bounding boxes
-        annotated_frame = results[0].plot()
+        try:
+            annotated_frame = results[0].plot()
+        except Exception as e:
+            logger.error(f"Error plotting results: {str(e)}")
+            return frame, "Error visualizing results", None
         
         # Extract class information from results
         boxes = results[0].boxes
@@ -118,13 +143,17 @@ def process_frame(frame, save_path=None):
         
         if len(boxes) > 0:
             for box in boxes:
-                # Get class index and convert to class name
-                cls = int(box.cls.item())
-                class_name = results[0].names[cls]
-                
-                # Update detection counters
-                if class_name in current_detected:
-                    current_detected[class_name] += 1
+                try:
+                    # Get class index and convert to class name
+                    cls = int(box.cls.item())
+                    class_name = results[0].names[cls].lower()
+                    
+                    # Update detection counters
+                    if class_name in current_detected:
+                        current_detected[class_name] += 1
+                except Exception as e:
+                    logger.error(f"Error processing detection box: {str(e)}")
+                    continue
         
         # Update global detection counters
         for key in detected_classes:
