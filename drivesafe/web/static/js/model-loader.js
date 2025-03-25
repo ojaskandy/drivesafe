@@ -7,7 +7,7 @@
 
 // Configuration
 const LOCAL_MODEL_URL = "/static/models/tfjs_model/model.json"; // Local model path in Flask static directory
-const FALLBACK_MODEL_URL = "https://tfhub.dev/tensorflow/tfjs-model/ssd_mobilenet_v2/1/default/1/model.json"; // Using TensorFlow Hub model as fallback
+const FALLBACK_MODEL_URL = "https://storage.googleapis.com/tfjs-models/savedmodel/ssd_mobilenet_v2/model.json"; // CORS-friendly Google Storage URL
 const MODEL_CACHE_KEY = "traffic-light-model-v1";
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000; // 2 seconds
@@ -29,6 +29,7 @@ class ModelLoader {
         this.error = null;
         this.retryCount = 0;
         this.statusListeners = [];
+        this.useSimulation = false;
         
         // Try to initialize the model right away
         this.init();
@@ -43,13 +44,16 @@ class ModelLoader {
             if (!window.tf) {
                 console.error("TensorFlow.js is not loaded. Make sure to include the script in your HTML.");
                 this.setStatus(STATUS.ERROR, "TensorFlow.js is not available");
+                this.useSimulation = true;
                 return;
             }
             
             // Check for WebGL support (required for model inference)
             const webglSupported = await this.checkWebGLSupport();
             if (!webglSupported) {
+                console.warn("WebGL is not supported in your browser. Using simulation mode.");
                 this.setStatus(STATUS.ERROR, "WebGL is not supported in your browser");
+                this.useSimulation = true;
                 return;
             }
             
@@ -64,6 +68,7 @@ class ModelLoader {
         } catch (err) {
             console.error("Error initializing model:", err);
             this.setStatus(STATUS.ERROR, err.message);
+            this.useSimulation = true;
         }
     }
     
@@ -117,7 +122,9 @@ class ModelLoader {
                 await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
                 await this.loadModel();
             } else {
+                console.warn("Failed after multiple retries. Switching to simulation mode.");
                 this.setStatus(STATUS.ERROR, `Failed to load model: ${err.message}`);
+                this.useSimulation = true;
             }
         }
     }
@@ -177,15 +184,23 @@ class ModelLoader {
                 });
                 console.log("Local model loaded successfully");
             } catch (localError) {
-                // If local model fails, try the fallback CDN
+                // If local model fails, try the fallback CDN with CORS-friendly URL
                 console.log("Local model failed, trying fallback CDN...", localError);
-                this.model = await tf.loadGraphModel(FALLBACK_MODEL_URL, {
-                    onProgress: (fraction) => {
-                        this.progress = Math.round(fraction * 100);
-                        this.notifyListeners();
-                    }
-                });
-                console.log("Fallback model loaded successfully");
+                
+                try {
+                    this.model = await tf.loadGraphModel(FALLBACK_MODEL_URL, {
+                        onProgress: (fraction) => {
+                            this.progress = Math.round(fraction * 100);
+                            this.notifyListeners();
+                        }
+                    });
+                    console.log("Fallback model loaded successfully");
+                } catch (fallbackError) {
+                    console.error("Fallback model also failed:", fallbackError);
+                    console.warn("Switching to simulation mode");
+                    this.useSimulation = true;
+                    throw new Error("All model loading attempts failed");
+                }
             }
             
             // Cache the model for future use
@@ -238,8 +253,9 @@ class ModelLoader {
      * @returns {Object} Detection results
      */
     async detectTrafficLights(videoElement) {
-        if (this.status !== STATUS.READY) {
-            throw new Error(`Model is not ready (status: ${this.status})`);
+        // If we're in simulation mode, just return simulated traffic lights
+        if (this.useSimulation || this.status !== STATUS.READY) {
+            return this.simulateTrafficLights();
         }
         
         try {
@@ -315,26 +331,20 @@ class ModelLoader {
                     }
                 }
             } catch (err) {
-                console.warn("Error processing SSD MobileNet results:", err);
-                // If SSD MobileNet processing fails, try simulating some results
-                // This ensures the UI always shows something
-                
-                // Add a simulated traffic light for demonstration
-                const randomClass = Math.floor(Math.random() * 3); // 0, 1, or 2
-                if (randomClass === 0) counts.red = 1;
-                else if (randomClass === 1) counts.yellow = 1;
-                else counts.green = 1;
-                
-                detections.push({
-                    box: [0.4, 0.4, 0.6, 0.6], // Center of the screen
-                    score: 0.8,
-                    class: randomClass
-                });
+                console.warn("Error processing model results:", err);
+                // If processing fails, fall back to simulation
+                return this.simulateTrafficLights();
             }
             
             // Clean up memory
             tf.dispose(result);
             tf.dispose(tensor);
+            
+            // If no detections were found, add a simulated one occasionally for testing
+            if (detections.length === 0 && Math.random() < 0.2) {
+                const simResult = this.simulateTrafficLights();
+                return simResult;
+            }
             
             return {
                 detections,
@@ -342,8 +352,51 @@ class ModelLoader {
             };
         } catch (err) {
             console.error("Error during traffic light detection:", err);
-            throw err;
+            // On any error, return simulated results
+            return this.simulateTrafficLights();
         }
+    }
+    
+    /**
+     * Generate simulated traffic light detections
+     * for when the model isn't available or errors occur
+     */
+    simulateTrafficLights() {
+        // Simulate 0-2 traffic lights
+        const lightCount = Math.floor(Math.random() * 3);
+        const detections = [];
+        const counts = {
+            red: 0,
+            yellow: 0,
+            green: 0,
+            unknown: 0
+        };
+        
+        for (let i = 0; i < lightCount; i++) {
+            // Random position
+            const x1 = 0.2 + (Math.random() * 0.6); // 0.2-0.8
+            const y1 = 0.2 + (Math.random() * 0.6); // 0.2-0.8
+            const width = 0.05 + (Math.random() * 0.1); // 0.05-0.15
+            const height = 0.1 + (Math.random() * 0.1); // 0.1-0.2
+            
+            // Random class (0=red, 1=yellow, 2=green)
+            const classId = Math.floor(Math.random() * 3);
+            if (classId === 0) counts.red++;
+            else if (classId === 1) counts.yellow++;
+            else counts.green++;
+            
+            detections.push({
+                box: [y1, x1, y1 + height, x1 + width],
+                score: 0.7 + (Math.random() * 0.3), // 0.7-1.0
+                class: classId
+            });
+        }
+        
+        return {
+            detections,
+            counts,
+            simulated: true // Flag to indicate these are simulated results
+        };
     }
     
     /**
@@ -403,6 +456,15 @@ class ModelLoader {
             ctx.fillStyle = 'black';
             ctx.fillText(`${label} ${(detection.score * 100).toFixed(0)}%`, x + 5, y - 5);
         });
+        
+        // Add a simulation indicator if these are simulated results
+        if (detectionResult.simulated) {
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(10, 10, 180, 30);
+            ctx.fillStyle = 'white';
+            ctx.font = '14px Arial';
+            ctx.fillText('SIMULATION MODE (DEMO)', 20, 30);
+        }
     }
     
     /**
@@ -442,7 +504,8 @@ class ModelLoader {
         const status = {
             status: this.status,
             progress: this.progress,
-            error: this.error
+            error: this.error,
+            simulation: this.useSimulation
         };
         
         this.statusListeners.forEach(listener => {

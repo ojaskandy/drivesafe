@@ -59,10 +59,27 @@
             font-size: 14px;
         }
         
+        .simulation-badge {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background-color: #ff6b00;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
         @media (max-width: 768px) {
             .video-container {
                 flex-direction: column;
             }
+        }
+        
+        /* Status styles */
+        .status-simulation {
+            color: #ff6b00;
         }
     </style>
 </head>
@@ -97,6 +114,7 @@
                 <h3>Detection View</h3>
                 <canvas id="processed-canvas" width="640" height="480"></canvas>
                 <div class="detection-label" id="detection-label">No detection active</div>
+                <div id="simulation-badge" class="simulation-badge" style="display: none;">SIMULATION MODE</div>
                 <div id="processed-loading-indicator" class="loading-indicator" style="display: none;">
                     <div class="spinner"></div>
                     <p>Processing...</p>
@@ -171,6 +189,7 @@
         const downloadProgressContainer = document.getElementById('download-progress-container');
         const downloadProgressBar = document.getElementById('download-progress');
         const detectionLabelElement = document.getElementById('detection-label');
+        const simulationBadgeElement = document.getElementById('simulation-badge');
 
         // Application state
         let stream = null;
@@ -180,6 +199,7 @@
         let lastFpsUpdate = 0;
         let animationFrameId = null;
         let liveCanvasContext = null;
+        let isSimulationMode = false;
         
         // Initialize the application
         document.addEventListener('DOMContentLoaded', initialize);
@@ -197,7 +217,8 @@
             updateModelStatus({
                 status: window.trafficLightModel.status,
                 progress: window.trafficLightModel.progress,
-                error: window.trafficLightModel.error
+                error: window.trafficLightModel.error,
+                simulation: window.trafficLightModel.useSimulation
             });
             
             // Log information about WebGL
@@ -228,6 +249,10 @@
         }
 
         function updateModelStatus(status) {
+            // Update simulation mode state
+            isSimulationMode = status.simulation || false;
+            simulationBadgeElement.style.display = isSimulationMode ? 'block' : 'none';
+            
             switch(status.status) {
                 case 'initializing':
                     modelStatusElement.textContent = 'Initializing...';
@@ -252,10 +277,17 @@
                     updateDetectionButtonState();
                     break;
                 case 'error':
-                    modelStatusElement.textContent = 'Model Error';
-                    modelStatusElement.className = 'status-error';
+                    if (isSimulationMode) {
+                        modelStatusElement.textContent = 'Simulation Mode (Demo)';
+                        modelStatusElement.className = 'status-simulation';
+                        showInfo('Using simulation mode for traffic light detection');
+                    } else {
+                        modelStatusElement.textContent = 'Model Error';
+                        modelStatusElement.className = 'status-error';
+                        showError(`Model error: ${status.error || 'Unknown error'}`);
+                    }
                     downloadProgressContainer.style.display = 'none';
-                    showError(`Model error: ${status.error || 'Unknown error'}`);
+                    updateDetectionButtonState();
                     break;
             }
         }
@@ -332,11 +364,13 @@
         }
 
         function updateDetectionButtonState() {
-            // Enable detection button only if camera is active and model is ready
+            // Enable detection button if camera is active (model can be in any state due to simulation)
             const cameraActive = stream !== null;
-            const modelReady = window.trafficLightModel.status === 'ready';
             
-            toggleDetectionBtn.disabled = !(cameraActive && modelReady);
+            // In simulation mode, or when model is ready, allow detection
+            const canDetect = cameraActive && (isSimulationMode || window.trafficLightModel.status === 'ready');
+            
+            toggleDetectionBtn.disabled = !canDetect;
         }
 
         function toggleDetection() {
@@ -354,7 +388,8 @@
                 // Start processing frames
                 processFrame();
                 
-                showInfo('Traffic light detection started');
+                const mode = isSimulationMode ? 'simulation' : 'real';
+                showInfo(`Traffic light detection started (${mode} mode)`);
             } else {
                 // Stop detection
                 toggleDetectionBtn.textContent = 'Start Detection';
