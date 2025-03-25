@@ -20,6 +20,9 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Global variables
 yolo_model = None
+cv2 = None
+torch = None
+YOLO = None
 detected_classes = {
     'red': 0,
     'green': 0,
@@ -27,16 +30,35 @@ detected_classes = {
     'none': 0
 }
 
-def lazy_import():
-    """Lazy import of heavy dependencies"""
-    try:
-        import cv2
-        import torch
-        from ultralytics import YOLO
-        return cv2, torch, YOLO
-    except ImportError as e:
-        logger.error(f"Error importing dependencies: {str(e)}")
-        return None, None, None
+def initialize_dependencies():
+    """Initialize all required dependencies"""
+    global cv2, torch, YOLO
+    
+    if cv2 is None:
+        try:
+            import cv2 as cv2_import
+            cv2 = cv2_import
+        except ImportError as e:
+            logger.error(f"Failed to import OpenCV: {str(e)}")
+            return False
+            
+    if torch is None:
+        try:
+            import torch as torch_import
+            torch = torch_import
+        except ImportError as e:
+            logger.error(f"Failed to import PyTorch: {str(e)}")
+            return False
+            
+    if YOLO is None:
+        try:
+            from ultralytics import YOLO as YOLO_import
+            YOLO = YOLO_import
+        except ImportError as e:
+            logger.error(f"Failed to import YOLO: {str(e)}")
+            return False
+            
+    return True
 
 def init_yolo_model():
     """Initialize the YOLO model efficiently"""
@@ -46,10 +68,9 @@ def init_yolo_model():
         return yolo_model
     
     try:
-        # Lazy import dependencies
-        cv2, torch, YOLO = lazy_import()
-        if None in (cv2, torch, YOLO):
-            logger.error("Failed to import required dependencies")
+        # Initialize dependencies first
+        if not initialize_dependencies():
+            logger.error("Failed to initialize dependencies")
             return None
         
         # Initialize device
@@ -72,13 +93,12 @@ def init_yolo_model():
 
 def process_frame(frame, save_path=None):
     """Process a frame with the YOLO model and return the results"""
-    global yolo_model, detected_classes
+    global yolo_model, detected_classes, cv2
     
     try:
-        # Import cv2 here to avoid circular import
-        cv2, _, _ = lazy_import()
-        if cv2 is None:
-            return frame, "OpenCV import failed", None
+        # Ensure dependencies are initialized
+        if not initialize_dependencies():
+            return frame, "Failed to initialize dependencies", None
             
         # If model is not loaded, try loading it
         if yolo_model is None:
@@ -137,13 +157,12 @@ def start_drive():
 
 @app.route('/process_frame', methods=['POST'])
 def process_image():
-    global detected_classes, yolo_model
+    global detected_classes, yolo_model, cv2
     
     try:
-        # Lazy import cv2
-        cv2, _, _ = lazy_import()
-        if cv2 is None:
-            return jsonify({'error': 'Failed to import OpenCV'}), 500
+        # Ensure dependencies are initialized
+        if not initialize_dependencies():
+            return jsonify({'error': 'Failed to initialize dependencies'}), 500
             
         # Get the image data from the request
         data = request.json
@@ -210,7 +229,11 @@ def model_status():
     })
 
 if __name__ == '__main__':
+    # Initialize dependencies at startup
+    initialize_dependencies()
+    
     # Initialize model at startup in development
     if os.environ.get('FLASK_ENV') != 'production':
         yolo_model = init_yolo_model()
+        
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000))) 
