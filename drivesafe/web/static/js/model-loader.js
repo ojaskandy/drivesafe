@@ -448,49 +448,77 @@ class ModelLoader {
         // Process up to the number of valid detections
         const validDetections = Math.min(numDetections, boxes.length);
         
-        // SSD MobileNet detects general objects, so we'll map some classes to traffic lights
-        // Class 10 is traffic light in COCO dataset
+        // The Syazvinski model is specifically trained for traffic lights with color classification
+        // It uses the following classes: 0=red_light, 1=yellow_light, 2=green_light
+        // This is different from SSD MobileNet which uses COCO classes (10=traffic light)
+        console.log("Processing detections, found:", validDetections);
+        
         for (let i = 0; i < validDetections; i++) {
-            if (scores[i] > 0.4) { // Confidence threshold
+            if (scores[i] > 0.3) { // Lower threshold to detect more traffic lights
                 const classId = Math.floor(classes[i]);
-                let mappedClass = 0; // Default to red light
+                let mappedClass = classId; // Use the actual class from model
                 let confidence = scores[i];
                 
-                // Class 10 in COCO is "traffic light"
-                if (classId === 10) {
-                    // Simulate traffic light colors based on position
-                    // Top third of the light is red, middle is yellow, bottom is green
-                    const [y1, x1, y2, x2] = boxes[i];
-                    const height = y2 - y1;
-                    const centerY = y1 + (height / 2);
-                    
-                    if (centerY < 0.4) {
-                        mappedClass = 0; // Red (top)
+                console.log("Detected object with class:", classId, "confidence:", confidence);
+                
+                // Check if this is a traffic light class
+                // Either direct from Syazvinski model (0=red, 1=yellow, 2=green)
+                // Or from COCO dataset (10=traffic light)
+                if (classId === 0 || classId === 1 || classId === 2) {
+                    // Direct traffic light classes from the specialized model
+                    if (classId === 0) {
                         counts.red++;
-                    } else if (centerY < 0.6) {
-                        mappedClass = 1; // Yellow (middle)
+                        console.log("Detected RED traffic light");
+                    } else if (classId === 1) {
                         counts.yellow++;
-                    } else {
-                        mappedClass = 2; // Green (bottom)
+                        console.log("Detected YELLOW traffic light");
+                    } else if (classId === 2) {
                         counts.green++;
+                        console.log("Detected GREEN traffic light");
                     }
                     
                     detections.push({
                         box: boxes[i], // [y1, x1, y2, x2] normalized coordinates
                         score: confidence,
-                        class: mappedClass
+                        class: classId // Use original class ID
                     });
-                } else if (classId === 1) { // Person (class 1 in COCO)
-                    // Just for demonstration
-                    counts.unknown++;
+                } else if (classId === 10) {
+                    // Handle generic traffic light from COCO dataset
+                    // Determine color based on position in the bounding box
+                    const [y1, x1, y2, x2] = boxes[i];
+                    const height = y2 - y1;
+                    const centerY = y1 + (height / 2);
+                    
+                    if (centerY < 0.4) {
+                        counts.red++;
+                        mappedClass = 0; // Red
+                    } else if (centerY < 0.6) {
+                        counts.yellow++;
+                        mappedClass = 1; // Yellow
+                    } else {
+                        counts.green++;
+                        mappedClass = 2; // Green
+                    }
+                    
                     detections.push({
                         box: boxes[i],
                         score: confidence,
-                        class: 3 // Unknown class
+                        class: mappedClass
                     });
+                } else if (classId === 1 && confidence > 0.5) {
+                    // Person detection - uncomment if needed
+                    // counts.unknown++;
+                    // detections.push({
+                    //     box: boxes[i],
+                    //     score: confidence,
+                    //     class: 3 // Unknown class
+                    // });
                 }
             }
         }
+        
+        // Log detection counts
+        console.log("Detection counts:", counts);
     }
     
     /**
