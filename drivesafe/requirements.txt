@@ -1,6 +1,6 @@
 # Core ML and CV dependencies
 ultralytics>=8.0.0  # YOLOv8
-opencv-python>=4.8.0  # OpenCV for image processing
+opencv-python-headless==4.5.3.56  # OpenCV for image processing (headless version for server environments)
 numpy>=1.24.0  # Numerical operations
 pillow>=10.0.0  # Image processing
 torch>=2.0.0  # PyTorch
