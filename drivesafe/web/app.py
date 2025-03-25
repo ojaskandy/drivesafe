@@ -1,12 +1,10 @@
 from flask import Flask, render_template, Response, request, jsonify, url_for, send_from_directory
-import cv2
 import os
 import torch
 import numpy as np
 from datetime import datetime
 import sys
 from werkzeug.utils import secure_filename
-from ultralytics import YOLO
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'static', 'uploads')
@@ -15,21 +13,31 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 # Ensure upload directory exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-# Initialize model
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models', 'traffic_light', 'best_traffic_small_yolo.pt')
-model = YOLO(model_path)
-
 # Class names
 class_names = ['red', 'yellow', 'green', 'off', 'person', 'lane']
 
 # Global variables
 camera = None
 is_detecting = False
+model = None
+
+def get_model():
+    """Lazy load the model only when needed to avoid import issues"""
+    global model
+    if model is None:
+        import cv2
+        from ultralytics import YOLO
+        # Initialize model
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models', 'traffic_light', 'best_traffic_small_yolo.pt')
+        model = YOLO(model_path)
+    return model
 
 def get_camera():
+    """Get or initialize the camera"""
     global camera
     if camera is None:
+        import cv2
         camera = cv2.VideoCapture(0)
         # Set camera properties for better performance
         camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
@@ -39,13 +47,20 @@ def get_camera():
     return camera
 
 def release_camera():
+    """Release the camera resources"""
     global camera, is_detecting
     if camera is not None:
+        import cv2
         camera.release()
         camera = None
     is_detecting = False
 
 def detect_objects(frame):
+    """Detect objects in a frame"""
+    import cv2
+    # Get model
+    model = get_model()
+    
     # Run inference
     results = model(frame, conf=0.25)
     
@@ -88,10 +103,12 @@ def detect_objects(frame):
     return processed_frame, detections
 
 def generate_frames():
+    """Generate video frames for streaming"""
     global is_detecting
     is_detecting = True
     
     while is_detecting:
+        import cv2
         camera = get_camera()
         if not camera.isOpened():
             break

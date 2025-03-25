@@ -1,12 +1,15 @@
 services:
   - type: web
-    name: drivesafe-app
+    name: drivesafe
     env: python
     buildCommand: ./build.sh
-    startCommand: cd drivesafe && gunicorn web_app:app --bind 0.0.0.0:$PORT
+    startCommand: cd drivesafe && gunicorn web_app:app --bind 0.0.0.0:$PORT --timeout 120
+    plan: free
+    branch: main
+    healthCheckPath: /
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.7
-      - key: PORT
-        value: 5001
-    plan: free
+    autoDeploy: true
+    previewFeatureFlags:
+      - assetsPreserved
