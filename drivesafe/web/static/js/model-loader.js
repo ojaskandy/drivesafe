@@ -259,14 +259,50 @@ class ModelLoader {
         }
         
         try {
-            // Convert the video frame to a tensor
-            const tensor = tf.browser.fromPixels(videoElement)
-                .resizeBilinear([640, 480]) // Resize to model input size
-                .expandDims(0) // Add batch dimension
-                .div(255.0); // Normalize pixel values
+            // Convert the video frame to a tensor - fixing the type issue
+            const tensor = tf.tidy(() => {
+                // Start with pixel data as in the range 0-255
+                const pixels = tf.browser.fromPixels(videoElement);
+                
+                // Resize to expected model input size
+                const resized = tf.image.resizeBilinear(pixels, [640, 480]);
+                
+                // For MobileNet SSD models, no need to normalize to 0-1 range
+                // Instead, keep as integers in the 0-255 range
+                const expanded = resized.expandDims(0);
+                
+                // Cast to int32 as required by the error message
+                return expanded.cast('int32');
+            });
             
             // Run model inference
-            const result = await this.model.executeAsync(tensor);
+            let result;
+            try {
+                result = await this.model.executeAsync({'image_tensor': tensor});
+            } catch (execError) {
+                console.error("Model execution error:", execError);
+                
+                // Try alternate format for model input
+                try {
+                    console.log("Trying alternate model input format...");
+                    // Clean up first tensor
+                    tf.dispose(tensor);
+                    
+                    // Create new tensor with different format - try the normalized 0-1 range version
+                    const altTensor = tf.tidy(() => {
+                        const pixels = tf.browser.fromPixels(videoElement);
+                        const resized = tf.image.resizeBilinear(pixels, [640, 480]);
+                        const normalized = resized.div(255.0);
+                        return normalized.expandDims(0);
+                    });
+                    
+                    result = await this.model.executeAsync(altTensor);
+                    tf.dispose(altTensor);
+                } catch (altError) {
+                    console.error("Alternate model format also failed:", altError);
+                    return this.simulateTrafficLights();
+                }
+            }
             
             // Process results - handle both YOLO format and SSD MobileNet format
             let detections = [];
@@ -334,21 +370,17 @@ class ModelLoader {
                 console.warn("Error processing model results:", err);
                 // If processing fails, fall back to simulation
                 return this.simulateTrafficLights();
+            } finally {
+                // Clean up memory
+                tf.dispose(result);
+                tf.dispose(tensor);
             }
             
-            // Clean up memory
-            tf.dispose(result);
-            tf.dispose(tensor);
-            
-            // If no detections were found, add a simulated one occasionally for testing
-            if (detections.length === 0 && Math.random() < 0.2) {
-                const simResult = this.simulateTrafficLights();
-                return simResult;
-            }
-            
+            // If no detections were found, return empty results instead of simulation
             return {
                 detections,
-                counts
+                counts,
+                simulated: false
             };
         } catch (err) {
             console.error("Error during traffic light detection:", err);
@@ -362,35 +394,49 @@ class ModelLoader {
      * for when the model isn't available or errors occur
      */
     simulateTrafficLights() {
-        // Simulate 0-2 traffic lights
-        const lightCount = Math.floor(Math.random() * 3);
-        const detections = [];
-        const counts = {
-            red: 0,
-            yellow: 0,
-            green: 0,
-            unknown: 0
-        };
+        // Instead of showing random positions for simulation,
+        // let's make a more controlled demo with just occasional detections
         
-        for (let i = 0; i < lightCount; i++) {
-            // Random position
-            const x1 = 0.2 + (Math.random() * 0.6); // 0.2-0.8
-            const y1 = 0.2 + (Math.random() * 0.6); // 0.2-0.8
-            const width = 0.05 + (Math.random() * 0.1); // 0.05-0.15
-            const height = 0.1 + (Math.random() * 0.1); // 0.1-0.2
-            
-            // Random class (0=red, 1=yellow, 2=green)
-            const classId = Math.floor(Math.random() * 3);
-            if (classId === 0) counts.red++;
-            else if (classId === 1) counts.yellow++;
-            else counts.green++;
-            
-            detections.push({
-                box: [y1, x1, y1 + height, x1 + width],
-                score: 0.7 + (Math.random() * 0.3), // 0.7-1.0
-                class: classId
-            });
+        // Only show a light 20% of the time, to avoid constant false detections
+        const shouldShowLight = Math.random() < 0.2;
+        
+        if (!shouldShowLight) {
+            return {
+                detections: [],
+                counts: { red: 0, yellow: 0, green: 0, unknown: 0 },
+                simulated: true
+            };
         }
+        
+        // Show just one light for a more realistic demo
+        const detections = [];
+        const counts = { red: 0, yellow: 0, green: 0, unknown: 0 };
+        
+        // Fixed position in the upper right area (where traffic lights often are)
+        const x1 = 0.7;
+        const y1 = 0.2;
+        const width = 0.06;
+        const height = 0.15;
+        
+        // Random class (0=red, 1=yellow, 2=green) with preference for red
+        const rand = Math.random();
+        let classId;
+        if (rand < 0.5) {
+            classId = 0; // 50% red
+            counts.red = 1;
+        } else if (rand < 0.8) {
+            classId = 1; // 30% yellow
+            counts.yellow = 1;
+        } else {
+            classId = 2; // 20% green
+            counts.green = 1;
+        }
+        
+        detections.push({
+            box: [y1, x1, y1 + height, x1 + width],
+            score: 0.7 + (Math.random() * 0.2), // 0.7-0.9
+            class: classId
+        });
         
         return {
             detections,
