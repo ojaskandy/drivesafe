@@ -1,29 +1,173 @@
-{% extends "base.html" %}
-
-{% block title %}Home{% endblock %}
-
-{% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-6">
-        <div class="card">
-            <div class="card-header">
-                <h2 class="text-center mb-0">Welcome to DriveSafe</h2>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DriveSafe - Drive Safely with AI</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <style>
+        .hero {
+            background-color: var(--dark-bg);
+            color: white;
+            padding: 4rem 2rem;
+            text-align: center;
+        }
+        
+        .hero h1 {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+        
+        .hero p {
+            font-size: 1.2rem;
+            max-width: 800px;
+            margin: 0 auto 2rem;
+        }
+        
+        .cta-button {
+            padding: 1rem 2rem;
+            font-size: 1.2rem;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            font-weight: bold;
+            text-decoration: none;
+            display: inline-block;
+            transition: background-color 0.3s;
+        }
+        
+        .cta-button:hover {
+            background-color: #3d8b40;
+        }
+        
+        .features {
+            padding: 4rem 2rem;
+            background-color: white;
+        }
+        
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .feature-card {
+            padding: 2rem;
+            background-color: var(--light-bg);
+            border-radius: var(--border-radius);
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .feature-card h3 {
+            font-size: 1.5rem;
+            margin-top: 0;
+            margin-bottom: 1rem;
+        }
+        
+        .feature-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            color: var(--primary-color);
+        }
+        
+        .info-section {
+            padding: 4rem 2rem;
+            background-color: var(--light-bg);
+        }
+        
+        .info-content {
+            max-width: 800px;
+            margin: 0 auto;
+            text-align: center;
+        }
+        
+        .info-content h2 {
+            font-size: 2rem;
+            margin-bottom: 1rem;
+        }
+        
+        .tech-stack {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 1rem;
+            margin-top: 2rem;
+        }
+        
+        .tech-item {
+            padding: 0.5rem 1rem;
+            background-color: white;
+            border-radius: var(--border-radius);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .footer {
+            background-color: var(--dark-bg);
+            color: white;
+            padding: 2rem;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>DriveSafe</h1>
+    </div>
+    
+    <div class="hero">
+        <h1>Drive Safely with AI</h1>
+        <p>DriveSafe is an AI-powered application that helps you detect traffic lights and road lanes in real-time to improve your driving safety.</p>
+        <a href="{{ url_for('start_drive') }}" class="cta-button">Start Driving</a>
+    </div>
+    
+    <div class="features">
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">🚦</div>
+                <h3>Traffic Light Detection</h3>
+                <p>Automatically detects traffic lights and identifies red, yellow, and green signals to help you make safer driving decisions.</p>
             </div>
-            <div class="card-body">
-                <p class="text-center mb-4">
-                    DriveSafe helps you detect traffic lights, lane markings, and pedestrians in real-time.
-                    Choose an option below to get started.
-                </p>
-                <div class="d-grid gap-3">
-                    <a href="/start_drive" class="btn btn-primary btn-lg">
-                        <i class="bi bi-camera-video"></i> Start Live Drive
-                    </a>
-                    <a href="/upload_drive" class="btn btn-outline-primary btn-lg">
-                        <i class="bi bi-upload"></i> Upload Demo Video
-                    </a>
-                </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">🛣️</div>
+                <h3>Lane Detection</h3>
+                <p>Identifies road lanes to help you maintain proper lane positioning and improve overall driving safety.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">⚡</div>
+                <h3>Real-Time Processing</h3>
+                <p>Processes camera feed in real-time, providing immediate feedback about traffic lights and road conditions.</p>
             </div>
         </div>
     </div>
-</div>
-{% endblock %} 
+    
+    <div class="info-section">
+        <div class="info-content">
+            <h2>How It Works</h2>
+            <p>DriveSafe uses advanced machine learning models running directly in your browser. Our models are trained on thousands of traffic scenarios to accurately detect traffic lights and road lanes in various lighting and weather conditions.</p>
+            <p>The application is built using client-side technology, ensuring your data stays on your device for maximum privacy and performance.</p>
+            
+            <h3>Technologies Used</h3>
+            <div class="tech-stack">
+                <div class="tech-item">TensorFlow.js</div>
+                <div class="tech-item">YOLOv5</div>
+                <div class="tech-item">WebGL</div>
+                <div class="tech-item">Flask</div>
+                <div class="tech-item">HTML5 / CSS3</div>
+                <div class="tech-item">JavaScript</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="footer">
+        <p>DriveSafe &copy; 2023 - All Rights Reserved</p>
+        <p>Powered by TensorFlow.js and YOLOv5</p>
+    </div>
+</body>
+</html> 

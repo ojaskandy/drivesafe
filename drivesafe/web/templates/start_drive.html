@@ -1,478 +1,390 @@
-{% extends "base.html" %}
-
-{% block title %}Start Drive{% endblock %}
-
-{% block content %}
-<div class="container-fluid mt-4">
-    <div class="row">
-        <div class="col-md-6 mb-4">
-            <div class="card shadow h-100">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h3 class="mb-0">Live Camera Feed</h3>
-                    <span id="connection-status" class="badge bg-secondary">Initializing</span>
-                </div>
-                <div class="card-body p-0 position-relative">
-                    <div id="video-container" class="ratio ratio-16x9">
-                        <video id="camera-feed" class="w-100" autoplay playsinline></video>
-                    </div>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DriveSafe - Start Drive</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <!-- TensorFlow.js core -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.20.0"></script>
+    <!-- TensorFlow.js backend for WebGL acceleration -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@3.20.0"></script>
+</head>
+<body>
+    <div class="header">
+        <h1>DriveSafe</h1>
+        <div class="status-bar">
+            <div class="model-status">
+                Model Status: <span id="model-status">Initializing...</span>
+                <div id="download-progress-container" class="progress-container" style="display: none;">
+                    <div id="download-progress" class="progress-bar"></div>
                 </div>
             </div>
-        </div>
-
-        <div class="col-md-6 mb-4">
-            <div class="card shadow h-100">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h3 class="mb-0">Detection View</h3>
-                    <span id="model-status" class="badge bg-secondary">Model Loading...</span>
-                </div>
-                <div class="card-body p-0 position-relative">
-                    <div id="detection-container" class="ratio ratio-16x9">
-                        <div id="detection-overlay" class="w-100 h-100" style="display: none;">
-                            <img id="processed-image" class="w-100 h-100" style="object-fit: cover;" />
-                        </div>
-                        <div id="loading-overlay" class="position-absolute top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center bg-dark bg-opacity-50" style="display: none;">
-                            <div class="spinner-border text-light" role="status">
-                                <span class="visually-hidden">Loading...</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+            <div class="camera-status">
+                Camera Status: <span id="camera-status">Inactive</span>
             </div>
         </div>
     </div>
 
-    <div class="row">
-        <div class="col-md-8">
-            <div class="card shadow mb-4">
-                <div class="card-body">
-                    <div id="status-message" class="alert alert-info mb-3">
-                        Camera not started. Click "Start Camera" to begin.
-                    </div>
-                    <div class="d-flex gap-2">
-                        <button id="start-camera" class="btn btn-primary">
-                            <i class="bi bi-camera-video"></i> Start Camera
-                        </button>
-                        <button id="start-detection" class="btn btn-success" disabled>
-                            <i class="bi bi-play-circle"></i> Start Detection
-                        </button>
-                        <button id="stop-detection" class="btn btn-danger" disabled>
-                            <i class="bi bi-stop-circle"></i> Stop Detection
-                        </button>
-                    </div>
+    <div class="content">
+        <div class="video-container">
+            <div class="video-feed">
+                <h3>Live Camera Feed</h3>
+                <video id="camera-feed" autoplay playsinline></video>
+                <canvas id="overlay-canvas" width="640" height="480"></canvas>
+                <div id="loading-indicator" class="loading-indicator" style="display: none;">
+                    <div class="spinner"></div>
+                    <p>Processing...</p>
                 </div>
             </div>
         </div>
 
-        <div class="col-md-4">
-            <div class="card shadow mb-4">
-                <div class="card-header">
-                    <h3 class="mb-0">Detection Statistics</h3>
+        <div class="detection-stats">
+            <h3>Detection Results</h3>
+            <div class="stats-container">
+                <div class="stat-item">
+                    <strong>Traffic Lights:</strong>
+                    <span id="traffic-light-count">0</span>
                 </div>
-                <div class="card-body">
-                    <div class="mb-3">
-                        <h5 id="detection-status">No detections yet</h5>
-                    </div>
-                    <div class="table-responsive">
-                        <table class="table table-sm">
-                            <thead>
-                                <tr>
-                                    <th>Traffic Light</th>
-                                    <th>Count</th>
-                                    <th>Current</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr>
-                                    <td>
-                                        <span class="badge rounded-pill bg-danger me-1">Red</span>
-                                        Red Light
-                                    </td>
-                                    <td id="red-count">0</td>
-                                    <td id="red-current">0</td>
-                                </tr>
-                                <tr>
-                                    <td>
-                                        <span class="badge rounded-pill bg-warning me-1">Yellow</span>
-                                        Yellow Light
-                                    </td>
-                                    <td id="yellow-count">0</td>
-                                    <td id="yellow-current">0</td>
-                                </tr>
-                                <tr>
-                                    <td>
-                                        <span class="badge rounded-pill bg-success me-1">Green</span>
-                                        Green Light
-                                    </td>
-                                    <td id="green-count">0</td>
-                                    <td id="green-current">0</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                    <button id="reset-stats" class="btn btn-sm btn-outline-secondary">
-                        <i class="bi bi-arrow-counterclockwise"></i> Reset Stats
-                    </button>
+                <div class="stat-item">
+                    <strong>Red Lights:</strong>
+                    <span id="red-light-count">0</span>
+                </div>
+                <div class="stat-item">
+                    <strong>Yellow Lights:</strong>
+                    <span id="yellow-light-count">0</span>
+                </div>
+                <div class="stat-item">
+                    <strong>Green Lights:</strong>
+                    <span id="green-light-count">0</span>
+                </div>
+                <div class="stat-item">
+                    <strong>Processing Time:</strong>
+                    <span id="processing-time">0</span> ms
+                </div>
+                <div class="stat-item">
+                    <strong>FPS:</strong>
+                    <span id="fps">0</span>
                 </div>
             </div>
-            
-            <div class="card shadow">
-                <div class="card-header">
-                    <h3 class="mb-0">Model Information</h3>
-                </div>
-                <div class="card-body">
-                    <div class="mb-3">
-                        <h6>Processing Time:</h6>
-                        <div id="processing-time">0 ms</div>
-                    </div>
-                    <div class="mb-3">
-                        <h6>FPS:</h6>
-                        <div id="fps">0</div>
-                    </div>
-                </div>
-            </div>
+        </div>
+
+        <div class="controls">
+            <button id="start-camera" class="btn">Start Camera</button>
+            <button id="stop-camera" class="btn" disabled>Stop Camera</button>
+            <button id="toggle-detection" class="btn" disabled>Start Detection</button>
         </div>
     </div>
-</div>
 
-<script>
-    document.addEventListener('DOMContentLoaded', () => {
-        // DOM elements
+    <div class="messages-container">
+        <div id="error-messages" class="error-message"></div>
+        <div id="info-messages" class="info-message"></div>
+    </div>
+
+    <!-- Load our model loader script -->
+    <script src="{{ url_for('static', filename='js/model-loader.js') }}"></script>
+
+    <script>
+        // DOM Elements
+        const cameraFeed = document.getElementById('camera-feed');
+        const overlayCanvas = document.getElementById('overlay-canvas');
+        const loadingIndicator = document.getElementById('loading-indicator');
         const startCameraBtn = document.getElementById('start-camera');
-        const startDetectionBtn = document.getElementById('start-detection');
-        const stopDetectionBtn = document.getElementById('stop-detection');
-        const resetStatsBtn = document.getElementById('reset-stats');
-        const statusMessage = document.getElementById('status-message');
-        const connectionStatus = document.getElementById('connection-status');
-        const modelStatus = document.getElementById('model-status');
-        const videoElement = document.getElementById('camera-feed');
-        const detectionOverlay = document.getElementById('detection-overlay');
-        const processedImage = document.getElementById('processed-image');
-        const loadingOverlay = document.getElementById('loading-overlay');
-        const detectionStatus = document.getElementById('detection-status');
-        const processingTime = document.getElementById('processing-time');
-        const fps = document.getElementById('fps');
-        
-        // Statistics elements
-        const redCount = document.getElementById('red-count');
-        const yellowCount = document.getElementById('yellow-count');
-        const greenCount = document.getElementById('green-count');
-        const redCurrent = document.getElementById('red-current');
-        const yellowCurrent = document.getElementById('yellow-current');
-        const greenCurrent = document.getElementById('green-current');
-        
-        // Variables
+        const stopCameraBtn = document.getElementById('stop-camera');
+        const toggleDetectionBtn = document.getElementById('toggle-detection');
+        const modelStatusElement = document.getElementById('model-status');
+        const cameraStatusElement = document.getElementById('camera-status');
+        const errorMessagesElement = document.getElementById('error-messages');
+        const infoMessagesElement = document.getElementById('info-messages');
+        const trafficLightCountElement = document.getElementById('traffic-light-count');
+        const redLightCountElement = document.getElementById('red-light-count');
+        const yellowLightCountElement = document.getElementById('yellow-light-count');
+        const greenLightCountElement = document.getElementById('green-light-count');
+        const processingTimeElement = document.getElementById('processing-time');
+        const fpsElement = document.getElementById('fps');
+        const downloadProgressContainer = document.getElementById('download-progress-container');
+        const downloadProgressBar = document.getElementById('download-progress');
+
+        // Application state
         let stream = null;
         let isDetecting = false;
-        let processingFrame = false;
-        let lastProcessingTime = 0;
-        let frameCount = 0;
-        let lastFpsUpdate = Date.now();
-        let processingIntervalId = null;
-        let retryCount = 0;
-        let modelLoaded = false;
-        const MAX_RETRIES = 3;
-        const PROCESSING_INTERVAL = 200; // 5 FPS for better stability
-        const FRAME_QUALITY = 0.8; // JPEG quality (0-1)
-        const TARGET_FPS = 5;
-        const FRAME_INTERVAL = 1000 / TARGET_FPS;
         let lastFrameTime = 0;
+        let frameCount = 0;
+        let lastFpsUpdate = 0;
+        let animationFrameId = null;
         
-        // Check model status periodically
-        async function checkModelStatus() {
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', initialize);
+
+        function initialize() {
+            // Set up event listeners
+            startCameraBtn.addEventListener('click', startCamera);
+            stopCameraBtn.addEventListener('click', stopCamera);
+            toggleDetectionBtn.addEventListener('click', toggleDetection);
+            
+            // Listen for model status changes
+            window.trafficLightModel.addStatusListener(updateModelStatus);
+            
+            // Initial UI update
+            updateModelStatus({
+                status: window.trafficLightModel.status,
+                progress: window.trafficLightModel.progress,
+                error: window.trafficLightModel.error
+            });
+            
+            // Log information about WebGL
+            logWebGLInfo();
+        }
+        
+        function logWebGLInfo() {
             try {
-                const response = await fetch('/model_status');
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                const data = await response.json();
+                const canvas = document.createElement('canvas');
+                const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
                 
-                // Update model status badge
-                if (data.opencv_loaded) {
-                    modelStatus.textContent = 'Lane Detection Ready';
-                    modelStatus.className = 'badge bg-success';
-                    startDetectionBtn.disabled = false;
+                if (gl) {
+                    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                    if (debugInfo) {
+                        const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+                        const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+                        console.log('WebGL Vendor:', vendor);
+                        console.log('WebGL Renderer:', renderer);
+                    }
+                    console.log('WebGL Version:', gl.getParameter(gl.VERSION));
+                    console.log('WebGL Shading Language Version:', gl.getParameter(gl.SHADING_LANGUAGE_VERSION));
                 } else {
-                    modelStatus.textContent = 'Detection Unavailable';
-                    modelStatus.className = 'badge bg-danger';
-                    startDetectionBtn.disabled = true;
+                    console.warn('WebGL is not supported in this browser.');
                 }
-                
-                // Show error messages if any
-                if (data.opencv_error || data.last_error) {
-                    let errorMessage = '';
-                    if (data.opencv_error) {
-                        errorMessage += `OpenCV Error: ${data.opencv_error}\n`;
-                    }
-                    if (data.last_error) {
-                        errorMessage += `Last Error: ${data.last_error}`;
-                    }
-                    console.error('Detection errors:', errorMessage);
-                    
-                    // Update status message with error details
-                    if (!isDetecting) {
-                        statusMessage.innerHTML = `
-                            <strong>Warning:</strong> Some detection features may be limited.<br>
-                            ${data.opencv_loaded ? '✅' : '❌'} Lane Detection<br>
-                            <small class="text-muted">Check console for detailed error messages</small>
-                        `;
-                        statusMessage.className = 'alert alert-warning mb-3';
-                    }
-                }
-            } catch (error) {
-                console.error('Error checking model status:', error);
-                modelStatus.textContent = 'Status Error';
-                modelStatus.className = 'badge bg-danger';
+            } catch (e) {
+                console.error('Error getting WebGL info:', e);
             }
         }
-        
-        // Start checking model status more frequently initially, then slow down
-        const checkStatusInterval = setInterval(checkModelStatus, 2000);
-        for (let i = 0; i < 5; i++) {
-            setTimeout(checkModelStatus, i * 200);
+
+        function updateModelStatus(status) {
+            switch(status.status) {
+                case 'initializing':
+                    modelStatusElement.textContent = 'Initializing...';
+                    modelStatusElement.className = 'status-initializing';
+                    downloadProgressContainer.style.display = 'none';
+                    break;
+                case 'downloading':
+                    modelStatusElement.textContent = `Downloading Model (${status.progress}%)`;
+                    modelStatusElement.className = 'status-downloading';
+                    downloadProgressContainer.style.display = 'block';
+                    downloadProgressBar.style.width = `${status.progress}%`;
+                    break;
+                case 'loading':
+                    modelStatusElement.textContent = 'Loading Model...';
+                    modelStatusElement.className = 'status-loading';
+                    downloadProgressContainer.style.display = 'none';
+                    break;
+                case 'ready':
+                    modelStatusElement.textContent = 'Model Ready';
+                    modelStatusElement.className = 'status-ready';
+                    downloadProgressContainer.style.display = 'none';
+                    updateDetectionButtonState();
+                    break;
+                case 'error':
+                    modelStatusElement.textContent = 'Model Error';
+                    modelStatusElement.className = 'status-error';
+                    downloadProgressContainer.style.display = 'none';
+                    showError(`Model error: ${status.error || 'Unknown error'}`);
+                    break;
+            }
         }
-        
-        // Process a frame from the camera
-        async function processFrame() {
-            if (!isDetecting || !stream || processingFrame) return;
-            
-            const now = performance.now();
-            if (now - lastFrameTime < FRAME_INTERVAL) return;
-            lastFrameTime = now;
-            
-            processingFrame = true;
-            const startTime = performance.now();
-            
+
+        async function startCamera() {
             try {
-                // Create a temporary canvas to capture the current frame
-                const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = videoElement.videoWidth;
-                tempCanvas.height = videoElement.videoHeight;
-                const tempContext = tempCanvas.getContext('2d');
-                tempContext.drawImage(videoElement, 0, 0, tempCanvas.width, tempCanvas.height);
-                
-                // Get the image data from the canvas
-                const imageData = tempCanvas.toDataURL('image/jpeg', FRAME_QUALITY);
-                
-                // Show loading overlay if processing takes too long
-                const loadingTimeout = setTimeout(() => {
-                    loadingOverlay.style.display = 'flex';
-                }, 1000);
-                
-                // Send the image data to the server for processing
-                const response = await fetch('/process_frame', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        image: imageData
-                    })
+                // Request camera access with lower resolution for better performance
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        frameRate: { ideal: 30 }
+                    }
                 });
                 
-                clearTimeout(loadingTimeout);
-                loadingOverlay.style.display = 'none';
+                // Connect the stream to the video element
+                cameraFeed.srcObject = stream;
                 
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                // Wait for the video to be ready
+                await new Promise(resolve => {
+                    cameraFeed.onloadedmetadata = () => {
+                        resolve();
+                    };
+                });
+                
+                // Start the video
+                await cameraFeed.play();
+                
+                // Update the canvas size to match the video
+                overlayCanvas.width = cameraFeed.videoWidth;
+                overlayCanvas.height = cameraFeed.videoHeight;
+                
+                // Update UI
+                cameraStatusElement.textContent = 'Active';
+                cameraStatusElement.className = 'status-ready';
+                startCameraBtn.disabled = true;
+                stopCameraBtn.disabled = false;
+                
+                // Check if we can enable detection
+                updateDetectionButtonState();
+                
+                showInfo('Camera started successfully');
+            } catch (error) {
+                console.error('Error starting camera:', error);
+                showError(`Failed to start camera: ${error.message}`);
+            }
+        }
+
+        function stopCamera() {
+            // Stop detection if it's running
+            if (isDetecting) {
+                toggleDetection();
+            }
+            
+            // Stop all tracks in the stream
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                cameraFeed.srcObject = null;
+                stream = null;
+            }
+            
+            // Clear the canvas
+            const ctx = overlayCanvas.getContext('2d');
+            ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            
+            // Update UI
+            cameraStatusElement.textContent = 'Inactive';
+            cameraStatusElement.className = '';
+            startCameraBtn.disabled = false;
+            stopCameraBtn.disabled = true;
+            toggleDetectionBtn.disabled = true;
+            
+            showInfo('Camera stopped');
+        }
+
+        function updateDetectionButtonState() {
+            // Enable detection button only if camera is active and model is ready
+            const cameraActive = stream !== null;
+            const modelReady = window.trafficLightModel.status === 'ready';
+            
+            toggleDetectionBtn.disabled = !(cameraActive && modelReady);
+        }
+
+        function toggleDetection() {
+            isDetecting = !isDetecting;
+            
+            if (isDetecting) {
+                // Start detection
+                toggleDetectionBtn.textContent = 'Stop Detection';
+                toggleDetectionBtn.className = 'btn active';
+                
+                // Reset FPS counter
+                frameCount = 0;
+                lastFpsUpdate = performance.now();
+                
+                // Start processing frames
+                processFrame();
+                
+                showInfo('Traffic light detection started');
+            } else {
+                // Stop detection
+                toggleDetectionBtn.textContent = 'Start Detection';
+                toggleDetectionBtn.className = 'btn';
+                
+                // Cancel the animation frame if it exists
+                if (animationFrameId) {
+                    cancelAnimationFrame(animationFrameId);
+                    animationFrameId = null;
                 }
                 
-                const data = await response.json();
+                // Clear the canvas
+                const ctx = overlayCanvas.getContext('2d');
+                ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
                 
-                if (data.error) {
-                    throw new Error(data.error);
-                }
+                // Reset statistics
+                trafficLightCountElement.textContent = '0';
+                redLightCountElement.textContent = '0';
+                yellowLightCountElement.textContent = '0';
+                greenLightCountElement.textContent = '0';
+                processingTimeElement.textContent = '0';
+                fpsElement.textContent = '0';
                 
-                // Reset retry count on successful processing
-                retryCount = 0;
+                showInfo('Traffic light detection stopped');
+            }
+        }
+
+        async function processFrame() {
+            if (!isDetecting) return;
+            
+            try {
+                // Show loading indicator
+                loadingIndicator.style.display = 'flex';
                 
-                // Display the processed image
-                if (data.processed_image) {
-                    processedImage.src = data.processed_image;
-                    detectionOverlay.style.display = 'block';
-                }
+                // Measure processing time
+                const startTime = performance.now();
                 
-                // Update detection status
-                if (data.detection_status) {
-                    detectionStatus.textContent = data.detection_status;
-                    statusMessage.textContent = data.detection_status;
-                    statusMessage.className = 'alert alert-success mb-3';
-                }
+                // Perform traffic light detection
+                const result = await window.trafficLightModel.detectTrafficLights(cameraFeed);
                 
-                // Calculate and display processing time
-                const endTime = performance.now();
-                lastProcessingTime = endTime - startTime;
-                processingTime.textContent = `${Math.round(lastProcessingTime)} ms`;
+                // Calculate processing time
+                const processingTime = performance.now() - startTime;
+                
+                // Draw the detections on the canvas
+                window.trafficLightModel.drawDetections(overlayCanvas, result);
+                
+                // Update statistics
+                const totalLights = result.counts.red + result.counts.yellow + result.counts.green + result.counts.unknown;
+                trafficLightCountElement.textContent = totalLights;
+                redLightCountElement.textContent = result.counts.red;
+                yellowLightCountElement.textContent = result.counts.yellow;
+                greenLightCountElement.textContent = result.counts.green;
+                processingTimeElement.textContent = processingTime.toFixed(1);
                 
                 // Update FPS counter
                 frameCount++;
-                const now = Date.now();
-                const elapsed = now - lastFpsUpdate;
-                if (elapsed >= 1000) {
-                    fps.textContent = Math.round((frameCount * 1000) / elapsed);
+                const now = performance.now();
+                if (now - lastFpsUpdate >= 1000) {
+                    const fps = Math.round((frameCount * 1000) / (now - lastFpsUpdate));
+                    fpsElement.textContent = fps;
                     frameCount = 0;
                     lastFpsUpdate = now;
                 }
                 
+                // Hide loading indicator
+                loadingIndicator.style.display = 'none';
             } catch (error) {
                 console.error('Error processing frame:', error);
-                retryCount++;
-                
-                if (retryCount >= MAX_RETRIES) {
-                    isDetecting = false;
-                    stopDetectionBtn.click();
-                    statusMessage.innerHTML = `
-                        <strong>Detection stopped due to errors:</strong><br>
-                        ${error.message}<br>
-                        <small class="text-muted">Check console for detailed error messages</small>
-                    `;
-                    statusMessage.className = 'alert alert-danger mb-3';
-                } else {
-                    statusMessage.innerHTML = `
-                        <strong>Error processing frame (retry ${retryCount}/${MAX_RETRIES}):</strong><br>
-                        ${error.message}<br>
-                        <small class="text-muted">Check console for detailed error messages</small>
-                    `;
-                    statusMessage.className = 'alert alert-warning mb-3';
-                }
-            } finally {
-                processingFrame = false;
-                // Add a small delay before processing the next frame
-                await new Promise(resolve => setTimeout(resolve, 50));
-            }
-        }
-        
-        // Helper function to animate counter updates
-        function animateCounter(element, start, end) {
-            const duration = 500;
-            const startTime = performance.now();
-            
-            function update() {
-                const currentTime = performance.now();
-                const progress = Math.min((currentTime - startTime) / duration, 1);
-                
-                const current = Math.round(start + (end - start) * progress);
-                element.textContent = current;
-                
-                if (progress < 1) {
-                    requestAnimationFrame(update);
-                }
+                showError(`Detection error: ${error.message}`);
+                loadingIndicator.style.display = 'none';
             }
             
-            requestAnimationFrame(update);
+            // Request the next frame with a slight delay to prevent overwhelming the browser
+            // This limits the FPS to about 15, which is sufficient for this application
+            setTimeout(() => {
+                animationFrameId = requestAnimationFrame(processFrame);
+            }, 60); // ~15 FPS with processing time included
         }
-        
-        // Helper function to update status message
-        function updateStatusMessage(detections, status) {
-            if (detections.red > 0) {
-                statusMessage.textContent = status;
-                statusMessage.className = 'alert alert-danger mb-3';
-            } else if (detections.yellow > 0) {
-                statusMessage.textContent = status;
-                statusMessage.className = 'alert alert-warning mb-3';
-            } else if (detections.green > 0) {
-                statusMessage.textContent = status;
-                statusMessage.className = 'alert alert-success mb-3';
-            } else {
-                statusMessage.textContent = status;
-                statusMessage.className = 'alert alert-info mb-3';
-            }
-        }
-        
-        // Start camera with error handling and retries
-        async function startCamera(retryCount = 0) {
-            const MAX_RETRIES = 3;
-            try {
-                connectionStatus.textContent = 'Requesting permission...';
-                connectionStatus.className = 'badge bg-warning';
-                
-                // Request camera permission with constraints
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        width: { ideal: 640 },  // Reduced resolution for better performance
-                        height: { ideal: 480 },
-                        facingMode: 'environment'
-                    }
-                });
-                
-                // Set up video element
-                videoElement.srcObject = stream;
-                await videoElement.play();
-                
-                // Update UI
-                connectionStatus.textContent = 'Connected';
-                connectionStatus.className = 'badge bg-success';
-                statusMessage.textContent = 'Camera started. Click "Start Detection" when ready.';
-                statusMessage.className = 'alert alert-success mb-3';
-                startCameraBtn.disabled = true;
-                
-                // Only enable start detection if model is loaded
-                if (modelLoaded) {
-                    startDetectionBtn.disabled = false;
-                }
-                
-            } catch (error) {
-                console.error('Error starting camera:', error);
-                
-                if (retryCount < MAX_RETRIES) {
-                    statusMessage.textContent = `Retrying camera start (${retryCount + 1}/${MAX_RETRIES})...`;
-                    statusMessage.className = 'alert alert-warning mb-3';
-                    setTimeout(() => startCamera(retryCount + 1), 1000);
-                } else {
-                    connectionStatus.textContent = 'Error';
-                    connectionStatus.className = 'badge bg-danger';
-                    statusMessage.textContent = `Failed to start camera: ${error.message}`;
-                    statusMessage.className = 'alert alert-danger mb-3';
-                }
-            }
-        }
-        
-        // Event listeners
-        startCameraBtn.addEventListener('click', () => startCamera());
-        
-        startDetectionBtn.addEventListener('click', () => {
-            isDetecting = true;
-            startDetectionBtn.disabled = true;
-            stopDetectionBtn.disabled = false;
-            statusMessage.textContent = 'Starting detection...';
-            statusMessage.className = 'alert alert-info mb-3';
-            detectionOverlay.style.display = 'block';
+
+        function showError(message) {
+            errorMessagesElement.textContent = message;
+            errorMessagesElement.style.display = 'block';
             
-            // Start processing frames with the new interval
-            processingIntervalId = setInterval(processFrame, PROCESSING_INTERVAL);
-        });
-        
-        stopDetectionBtn.addEventListener('click', () => {
-            isDetecting = false;
-            clearInterval(processingIntervalId);
-            startDetectionBtn.disabled = false;
-            stopDetectionBtn.disabled = true;
-            detectionOverlay.style.display = 'none';
-            loadingOverlay.style.display = 'none';
-            statusMessage.textContent = 'Detection stopped. Click "Start Detection" to resume.';
-            statusMessage.className = 'alert alert-info mb-3';
-        });
-        
-        resetStatsBtn.addEventListener('click', async () => {
-            try {
-                const response = await fetch('/reset_stats', { method: 'POST' });
-                if (!response.ok) throw new Error('Failed to reset stats');
-                
-                // Reset all counters
-                redCount.textContent = '0';
-                yellowCount.textContent = '0';
-                greenCount.textContent = '0';
-                redCurrent.textContent = '0';
-                yellowCurrent.textContent = '0';
-                greenCurrent.textContent = '0';
-                
-                statusMessage.textContent = 'Statistics reset successfully.';
-                statusMessage.className = 'alert alert-success mb-3';
-            } catch (error) {
-                console.error('Error resetting stats:', error);
-                statusMessage.textContent = `Failed to reset stats: ${error.message}`;
-                statusMessage.className = 'alert alert-danger mb-3';
-            }
-        });
-    });
-</script>
-{% endblock %} 
+            // Hide after 5 seconds
+            setTimeout(() => {
+                errorMessagesElement.style.display = 'none';
+            }, 5000);
+        }
+
+        function showInfo(message) {
+            infoMessagesElement.textContent = message;
+            infoMessagesElement.style.display = 'block';
+            
+            // Hide after 3 seconds
+            setTimeout(() => {
+                infoMessagesElement.style.display = 'none';
+            }, 3000);
+        }
+    </script>
+</body>
+</html> 
