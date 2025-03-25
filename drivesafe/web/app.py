@@ -45,65 +45,36 @@ detected_classes = {
 }
 
 def init_yolo_model():
-    """Initialize the YOLO model in a separate thread"""
-    global yolo_model, model_loading
+    """Initialize the YOLO model efficiently"""
+    global yolo_model
     
-    if yolo_model is not None or model_loading:
-        return
-    
-    model_loading = True
+    if yolo_model is not None:
+        return yolo_model
     
     try:
-        logger.info("Initializing YOLO model...")
-        start_time = time.time()
+        from ultralytics import YOLO
+        import torch
         
-        # Check if we're running in production
-        if os.environ.get('FLASK_ENV') == 'production':
-            # In production, the model should already be initialized
-            sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            from ultralytics import YOLO
-            model_path = os.path.join('drivesafe', 'models', 'traffic_light', 'best_traffic_small_yolo.pt')
-            yolo_model = YOLO(model_path)
-        else:
-            # In development, try to use the initialization script
-            try:
-                # Try running the initialization script
-                script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'init_model.py')
-                if os.path.exists(script_path):
-                    logger.info(f"Running model initialization script: {script_path}")
-                    result = subprocess.run([sys.executable, script_path], capture_output=True, text=True)
-                    if result.returncode != 0:
-                        logger.error(f"Model initialization script failed: {result.stderr}")
-                        raise Exception(f"Model initialization script failed: {result.stderr}")
-                    else:
-                        logger.info(f"Model initialization script succeeded: {result.stdout}")
-                
-                # Load the model directly
-                from ultralytics import YOLO
-                model_path = os.path.join('drivesafe', 'models', 'traffic_light', 'best_traffic_small_yolo.pt')
-                yolo_model = YOLO(model_path)
-            except Exception as e:
-                logger.error(f"Error loading YOLO model: {str(e)}")
-                traceback.print_exc()
-                raise
+        # Initialize device
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        logger.info(f"Using device: {device}")
         
-        elapsed_time = time.time() - start_time
-        logger.info(f"YOLO model initialized successfully in {elapsed_time:.2f} seconds")
+        # Load model directly
+        model_path = os.path.join('drivesafe', 'models', 'traffic_light', 'best_traffic_small_yolo.pt')
+        if not os.path.exists(model_path):
+            logger.error(f"Model file not found at {model_path}")
+            return None
+            
+        yolo_model = YOLO(model_path)
+        logger.info("YOLO model loaded successfully")
+        return yolo_model
+        
     except Exception as e:
         logger.error(f"Failed to initialize YOLO model: {str(e)}")
-        traceback.print_exc()
-    finally:
-        model_loading = False
+        return None
 
-def start_model_loading_thread():
-    """Start a thread to load the YOLO model"""
-    thread = threading.Thread(target=init_yolo_model)
-    thread.daemon = True
-    thread.start()
-    return thread
-
-# Start loading the model in the background when the app starts
-model_thread = start_model_loading_thread()
+# Initialize model at startup
+yolo_model = init_yolo_model()
 
 def get_model():
     """Lazy load the model only when needed to avoid import issues"""
@@ -481,18 +452,15 @@ def process_image():
             'processed_image': f'data:image/jpeg;base64,{processed_image}',
             'detection_status': status,
             'model_loaded': yolo_model is not None,
-            'model_loading': model_loading,
             'detections': detected_classes,
             'current_detections': current_detections
         })
         
     except Exception as e:
         logger.error(f"Error in process_frame endpoint: {str(e)}")
-        traceback.print_exc()
         return jsonify({
             'error': str(e),
-            'model_loaded': yolo_model is not None,
-            'model_loading': model_loading
+            'model_loaded': yolo_model is not None
         }), 500
 
 @app.route('/stats', methods=['GET'])
@@ -501,8 +469,7 @@ def get_stats():
     
     return jsonify({
         'detections': detected_classes,
-        'model_loaded': yolo_model is not None,
-        'model_loading': model_loading
+        'model_loaded': yolo_model is not None
     })
 
 @app.route('/reset_stats', methods=['POST'])
@@ -520,11 +487,10 @@ def reset_stats():
 
 @app.route('/model_status', methods=['GET'])
 def model_status():
-    global yolo_model, model_loading
+    global yolo_model
     
     return jsonify({
-        'model_loaded': yolo_model is not None,
-        'model_loading': model_loading
+        'model_loaded': yolo_model is not None
     })
 
 def process_frame(frame, save_path=None):
@@ -532,11 +498,11 @@ def process_frame(frame, save_path=None):
     global yolo_model, detected_classes
     
     try:
-        # If model is not loaded yet, wait for it
+        # If model is not loaded, try loading it
         if yolo_model is None:
-            if not model_loading:
-                start_model_loading_thread()
-            return frame, "Model loading", None
+            yolo_model = init_yolo_model()
+            if yolo_model is None:
+                return frame, "Model loading failed", None
         
         # Process the frame with the YOLO model
         results = yolo_model(frame)
@@ -577,7 +543,6 @@ def process_frame(frame, save_path=None):
     
     except Exception as e:
         logger.error(f"Error processing frame: {str(e)}")
-        traceback.print_exc()
         return frame, f"Processing error: {str(e)}", None
 
 if __name__ == '__main__':

@@ -19,14 +19,6 @@
                     <div id="detection-overlay" class="position-absolute top-0 start-0 w-100 h-100" style="display: none;">
                         <img id="processed-image" class="w-100 h-100" style="object-fit: cover;" />
                     </div>
-                    <div id="loading-overlay" class="position-absolute top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center bg-dark bg-opacity-75" style="display: none; z-index: 10;">
-                        <div class="text-center">
-                            <div class="spinner-border text-light mb-3" role="status">
-                                <span class="visually-hidden">Loading...</span>
-                            </div>
-                            <h5 class="text-light" id="loading-message">Starting model...</h5>
-                        </div>
-                    </div>
                 </div>
                 <div class="card-footer">
                     <div id="status-message" class="alert alert-info mb-3">
@@ -105,10 +97,6 @@
                 </div>
                 <div class="card-body">
                     <div class="mb-3">
-                        <h6>Model Status:</h6>
-                        <div id="model-status" class="badge bg-info">Checking...</div>
-                    </div>
-                    <div class="mb-3">
                         <h6>Processing Time:</h6>
                         <div id="processing-time">0 ms</div>
                     </div>
@@ -135,10 +123,7 @@
         const videoContainer = document.getElementById('video-container');
         const detectionOverlay = document.getElementById('detection-overlay');
         const processedImage = document.getElementById('processed-image');
-        const loadingOverlay = document.getElementById('loading-overlay');
-        const loadingMessage = document.getElementById('loading-message');
         const detectionStatus = document.getElementById('detection-status');
-        const modelStatus = document.getElementById('model-status');
         const processingTime = document.getElementById('processing-time');
         const fps = document.getElementById('fps');
         
@@ -153,73 +138,16 @@
         // Variables
         let stream = null;
         let isDetecting = false;
-        let isModelLoaded = false;
-        let isModelLoading = false;
         let canvasContext = null;
         let canvasElement = null;
         let lastProcessingTime = 0;
         let frameCount = 0;
         let lastFpsUpdate = Date.now();
         let processingIntervalId = null;
-        let modelCheckIntervalId = null;
-        
-        // Check model status periodically
-        function checkModelStatus() {
-            fetch('/model_status')
-                .then(response => response.json())
-                .then(data => {
-                    isModelLoaded = data.model_loaded;
-                    isModelLoading = data.model_loading;
-                    
-                    if (isModelLoaded) {
-                        modelStatus.textContent = 'Loaded';
-                        modelStatus.className = 'badge bg-success';
-                        startDetectionBtn.disabled = !stream;
-                    } else if (isModelLoading) {
-                        modelStatus.textContent = 'Loading...';
-                        modelStatus.className = 'badge bg-warning';
-                    } else {
-                        modelStatus.textContent = 'Not loaded';
-                        modelStatus.className = 'badge bg-danger';
-                    }
-                })
-                .catch(error => {
-                    console.error('Error checking model status:', error);
-                    modelStatus.textContent = 'Error';
-                    modelStatus.className = 'badge bg-danger';
-                });
-        }
-        
-        // Initialize model status check
-        modelCheckIntervalId = setInterval(checkModelStatus, 2000);
-        checkModelStatus();
-        
-        // Reset detection statistics
-        function resetStats() {
-            fetch('/reset_stats', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            })
-                .then(response => response.json())
-                .then(data => {
-                    redCount.textContent = '0';
-                    yellowCount.textContent = '0';
-                    greenCount.textContent = '0';
-                    redCurrent.textContent = '0';
-                    yellowCurrent.textContent = '0';
-                    greenCurrent.textContent = '0';
-                    detectionStatus.textContent = 'No detections yet';
-                })
-                .catch(error => {
-                    console.error('Error resetting stats:', error);
-                });
-        }
         
         // Process a frame from the camera
         function processFrame() {
-            if (!isDetecting || !stream || !isModelLoaded) return;
+            if (!isDetecting || !stream) return;
             
             const startTime = performance.now();
             
@@ -342,7 +270,7 @@
                 statusMessage.textContent = 'Camera is running. Click "Start Detection" to begin processing.';
                 statusMessage.className = 'alert alert-info mb-3';
                 startCameraBtn.disabled = true;
-                startDetectionBtn.disabled = !isModelLoaded;
+                startDetectionBtn.disabled = false;
                 
             } catch (error) {
                 console.error('Error accessing camera:', error);
@@ -355,23 +283,7 @@
         
         // Start detection
         startDetectionBtn.addEventListener('click', () => {
-            // Show loading overlay while model prepares
-            if (!isModelLoaded) {
-                loadingOverlay.style.display = 'flex';
-                loadingMessage.textContent = 'Loading model...';
-                
-                // Check model status more frequently during loading
-                const loadCheckInterval = setInterval(() => {
-                    checkModelStatus();
-                    if (isModelLoaded) {
-                        clearInterval(loadCheckInterval);
-                        loadingOverlay.style.display = 'none';
-                        startDetection();
-                    }
-                }, 500);
-            } else {
-                startDetection();
-            }
+            startDetection();
         });
         
         function startDetection() {
@@ -383,7 +295,7 @@
             stopDetectionBtn.disabled = false;
             
             // Process frames at a reasonable interval
-            processingIntervalId = setInterval(processFrame, 200);  // Process ~5 frames per second
+            processingIntervalId = setInterval(processFrame, 100);  // Process ~10 frames per second
             
             // Process the first frame immediately
             processFrame();
@@ -401,7 +313,27 @@
         });
         
         // Reset stats
-        resetStatsBtn.addEventListener('click', resetStats);
+        resetStatsBtn.addEventListener('click', () => {
+            fetch('/reset_stats', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+                .then(response => response.json())
+                .then(data => {
+                    redCount.textContent = '0';
+                    yellowCount.textContent = '0';
+                    greenCount.textContent = '0';
+                    redCurrent.textContent = '0';
+                    yellowCurrent.textContent = '0';
+                    greenCurrent.textContent = '0';
+                    detectionStatus.textContent = 'No detections yet';
+                })
+                .catch(error => {
+                    console.error('Error resetting stats:', error);
+                });
+        });
         
         // Cleanup on page unload
         window.addEventListener('beforeunload', () => {
@@ -409,7 +341,6 @@
                 stream.getTracks().forEach(track => track.stop());
             }
             clearInterval(processingIntervalId);
-            clearInterval(modelCheckIntervalId);
         });
     });
 </script>
