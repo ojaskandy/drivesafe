@@ -6,6 +6,8 @@ import logging
 from pathlib import Path
 import base64
 import numpy as np
+import threading
+from queue import Queue
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -23,6 +25,8 @@ yolo_model = None
 cv2 = None
 torch = None
 YOLO = None
+model_lock = threading.Lock()
+frame_queue = Queue(maxsize=2)  # Limit queue size to prevent memory issues
 detected_classes = {
     'red': 0,
     'green': 0,
@@ -34,106 +38,119 @@ def initialize_dependencies():
     """Initialize all required dependencies"""
     global cv2, torch, YOLO
     
-    if cv2 is None:
-        try:
+    try:
+        if cv2 is None:
             import cv2 as cv2_import
             cv2 = cv2_import
-        except ImportError as e:
-            logger.error(f"Failed to import OpenCV: {str(e)}")
-            return False
+            logger.info("OpenCV initialized successfully")
             
-    if torch is None:
-        try:
+        if torch is None:
             import torch as torch_import
             torch = torch_import
-        except ImportError as e:
-            logger.error(f"Failed to import PyTorch: {str(e)}")
-            return False
+            logger.info("PyTorch initialized successfully")
             
-    if YOLO is None:
-        try:
+        if YOLO is None:
             from ultralytics import YOLO as YOLO_import
             YOLO = YOLO_import
-        except ImportError as e:
-            logger.error(f"Failed to import YOLO: {str(e)}")
-            return False
+            logger.info("YOLO imported successfully")
             
-    return True
+        return True
+    except Exception as e:
+        logger.error(f"Failed to initialize dependencies: {str(e)}")
+        return False
 
 def init_yolo_model():
-    """Initialize the YOLO model efficiently"""
+    """Initialize the YOLO model efficiently with caching"""
     global yolo_model
     
-    if yolo_model is not None:
-        return yolo_model
-    
-    try:
-        # Initialize dependencies first
-        if not initialize_dependencies():
-            logger.error("Failed to initialize dependencies")
-            return None
+    with model_lock:
+        if yolo_model is not None:
+            return yolo_model
         
-        # Initialize device
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        logger.info(f"Using device: {device}")
-        
-        # Load model directly - try both development and production paths
-        model_paths = [
-            'best_traffic_small_yolo.pt',
-            os.path.join('models', 'traffic_light', 'best_traffic_small_yolo.pt'),
-            os.path.join('drivesafe', 'models', 'traffic_light', 'best_traffic_small_yolo.pt'),
-            '/app/best_traffic_small_yolo.pt',
-            '/app/models/traffic_light/best_traffic_small_yolo.pt'
-        ]
-        
-        model_loaded = False
-        last_error = None
-        
-        for model_path in model_paths:
-            try:
-                if os.path.exists(model_path):
-                    logger.info(f"Attempting to load model from: {model_path}")
-                    yolo_model = YOLO(model_path)
-                    logger.info(f"YOLO model loaded successfully from {model_path}")
-                    model_loaded = True
-                    break
-                else:
-                    logger.warning(f"Model path does not exist: {model_path}")
-            except Exception as e:
-                last_error = e
-                logger.error(f"Failed to load model from {model_path}: {str(e)}")
-                continue
-        
-        if not model_loaded:
-            logger.error(f"Could not load model from any path. Last error: {str(last_error)}")
-            return None
+        try:
+            # Initialize dependencies first
+            if not initialize_dependencies():
+                logger.error("Failed to initialize dependencies")
+                return None
             
-        return yolo_model
-        
-    except Exception as e:
-        logger.error(f"Failed to initialize YOLO model: {str(e)}")
-        return None
+            # Initialize device and set PyTorch settings
+            if torch.cuda.is_available():
+                device = torch.device('cuda')
+                # Enable TF32 for better performance on Ampere GPUs
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+            else:
+                device = torch.device('cpu')
+                # Enable OpenMP for CPU
+                if hasattr(torch, 'set_num_threads'):
+                    torch.set_num_threads(4)  # Adjust based on CPU cores
+            
+            logger.info(f"Using device: {device}")
+            
+            # Look for model in multiple locations
+            model_paths = [
+                'best_traffic_small_yolo.pt',
+                os.path.join('models', 'traffic_light', 'best_traffic_small_yolo.pt'),
+                os.path.join(os.path.dirname(__file__), 'best_traffic_small_yolo.pt'),
+                os.path.join(os.path.dirname(__file__), 'models', 'traffic_light', 'best_traffic_small_yolo.pt')
+            ]
+            
+            model_loaded = False
+            for model_path in model_paths:
+                if os.path.exists(model_path):
+                    logger.info(f"Loading model from: {model_path}")
+                    try:
+                        yolo_model = YOLO(model_path)
+                        if device.type == 'cpu':
+                            yolo_model.cpu()
+                        else:
+                            yolo_model.to(device)
+                        
+                        # Warmup the model
+                        logger.info("Warming up model...")
+                        dummy_input = torch.zeros((1, 3, 640, 480), device=device)
+                        for _ in range(2):
+                            if device.type == 'cuda':
+                                torch.cuda.synchronize()
+                            _ = yolo_model(dummy_input)
+                        
+                        logger.info("Model warmup complete")
+                        model_loaded = True
+                        break
+                    except Exception as e:
+                        logger.error(f"Failed to load model from {model_path}: {str(e)}")
+                        continue
+            
+            if not model_loaded:
+                logger.error("Could not load model from any path")
+                return None
+            
+            return yolo_model
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize YOLO model: {str(e)}")
+            return None
 
 def process_frame(frame, save_path=None):
     """Process a frame with the YOLO model and return the results"""
     global yolo_model, detected_classes, cv2
     
     try:
-        # Ensure dependencies are initialized
-        if not initialize_dependencies():
-            logger.error("Failed to initialize dependencies")
-            return frame, "Failed to initialize dependencies", None
-            
-        # If model is not loaded, try loading it
+        # Quick check if model is loaded
         if yolo_model is None:
-            yolo_model = init_yolo_model()
-            if yolo_model is None:
-                logger.error("Model loading failed")
-                return frame, "Model loading failed", None
+            return frame, "Model not initialized", None
+        
+        # Resize frame for faster processing
+        frame = cv2.resize(frame, (640, 480))
         
         # Process the frame with the YOLO model
         try:
-            results = yolo_model(frame)
+            # Convert frame to RGB (YOLO expects RGB)
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            # Run inference with lower confidence threshold
+            with model_lock:
+                results = yolo_model(frame_rgb, conf=0.3, iou=0.5)
         except Exception as e:
             logger.error(f"Error during model inference: {str(e)}")
             return frame, f"Error during detection: {str(e)}", None
@@ -141,6 +158,8 @@ def process_frame(frame, save_path=None):
         # Get the plotted frame with bounding boxes
         try:
             annotated_frame = results[0].plot()
+            # Convert back to BGR for OpenCV
+            annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)
         except Exception as e:
             logger.error(f"Error plotting results: {str(e)}")
             return frame, "Error visualizing results", None
@@ -152,13 +171,18 @@ def process_frame(frame, save_path=None):
         if len(boxes) > 0:
             for box in boxes:
                 try:
-                    # Get class index and convert to class name
+                    # Get class index and confidence
                     cls = int(box.cls.item())
+                    conf = float(box.conf.item())
                     class_name = results[0].names[cls].lower()
                     
-                    # Update detection counters
-                    if class_name in current_detected:
+                    # Only count detections with confidence > 0.3
+                    if conf > 0.3 and class_name in current_detected:
                         current_detected[class_name] += 1
+                        # Add confidence to the frame
+                        x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                        cv2.putText(annotated_frame, f"{conf:.2f}", (x1, y1-10),
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 2)
                 except Exception as e:
                     logger.error(f"Error processing detection box: {str(e)}")
                     continue
@@ -170,11 +194,11 @@ def process_frame(frame, save_path=None):
         
         # Determine overall detection status
         if current_detected["red"] > 0:
-            detection_status = "Red light detected! Please stop."
+            detection_status = f"Red light detected! ({current_detected['red']} instances)"
         elif current_detected["yellow"] > 0:
-            detection_status = "Yellow light detected! Proceed with caution."
+            detection_status = f"Yellow light detected! ({current_detected['yellow']} instances)"
         elif current_detected["green"] > 0:
-            detection_status = "Green light detected! Safe to proceed."
+            detection_status = f"Green light detected! ({current_detected['green']} instances)"
         else:
             detection_status = "No traffic lights detected"
         
@@ -201,7 +225,7 @@ def process_image():
         if not initialize_dependencies():
             logger.error("Failed to initialize dependencies")
             return jsonify({'error': 'Failed to initialize dependencies'}), 500
-            
+        
         # Get the image data from the request
         data = request.json
         if not data or 'image' not in data:
@@ -218,7 +242,7 @@ def process_image():
             if frame is None:
                 logger.error("Failed to decode image")
                 return jsonify({'error': 'Failed to decode image'}), 400
-                
+            
         except Exception as e:
             logger.error(f"Error decoding image: {str(e)}")
             return jsonify({'error': f'Error decoding image: {str(e)}'}), 400
@@ -230,7 +254,7 @@ def process_image():
             if processed_frame is None:
                 logger.error("Failed to process frame")
                 return jsonify({'error': 'Failed to process frame'}), 500
-                
+            
             # Encode the processed frame back to base64
             _, buffer = cv2.imencode('.jpg', processed_frame)
             processed_image = base64.b64encode(buffer).decode('utf-8')
@@ -291,11 +315,10 @@ if __name__ == '__main__':
         logger.error("Failed to initialize dependencies. Exiting.")
         sys.exit(1)
     
-    # Initialize model at startup
-    if not init_yolo_model():
-        logger.error("Failed to initialize YOLO model. Exiting.")
-        sys.exit(1)
-        
+    # Initialize model at startup in a separate thread
+    model_thread = threading.Thread(target=init_yolo_model)
+    model_thread.start()
+    
     # Start the Flask app
     port = int(os.environ.get('PORT', 5000))
     app.run(debug=True, host='0.0.0.0', port=port) 

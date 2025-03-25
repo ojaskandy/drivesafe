@@ -21,8 +21,9 @@
 
         <div class="col-md-6 mb-4">
             <div class="card shadow h-100">
-                <div class="card-header">
+                <div class="card-header d-flex justify-content-between align-items-center">
                     <h3 class="mb-0">Detection View</h3>
+                    <span id="model-status" class="badge bg-secondary">Model Loading...</span>
                 </div>
                 <div class="card-body p-0 position-relative">
                     <div id="detection-container" class="ratio ratio-16x9">
@@ -142,6 +143,7 @@
         const resetStatsBtn = document.getElementById('reset-stats');
         const statusMessage = document.getElementById('status-message');
         const connectionStatus = document.getElementById('connection-status');
+        const modelStatus = document.getElementById('model-status');
         const videoElement = document.getElementById('camera-feed');
         const detectionOverlay = document.getElementById('detection-overlay');
         const processedImage = document.getElementById('processed-image');
@@ -167,11 +169,41 @@
         let lastFpsUpdate = Date.now();
         let processingIntervalId = null;
         let retryCount = 0;
+        let modelLoaded = false;
         const MAX_RETRIES = 3;
+        const PROCESSING_INTERVAL = 200; // 5 FPS for better stability
+        const FRAME_QUALITY = 0.8; // JPEG quality (0-1)
+        const TARGET_FPS = 5;
+        const FRAME_INTERVAL = 1000 / TARGET_FPS;
+        let lastFrameTime = 0;
+        
+        // Check model status periodically
+        async function checkModelStatus() {
+            try {
+                const response = await fetch('/model_status');
+                const data = await response.json();
+                
+                if (data.model_loaded && !modelLoaded) {
+                    modelLoaded = true;
+                    modelStatus.textContent = 'Model Ready';
+                    modelStatus.className = 'badge bg-success';
+                    startDetectionBtn.disabled = false;
+                }
+            } catch (error) {
+                console.error('Error checking model status:', error);
+            }
+        }
+        
+        // Start checking model status
+        setInterval(checkModelStatus, 2000);
         
         // Process a frame from the camera
         async function processFrame() {
             if (!isDetecting || !stream || processingFrame) return;
+            
+            const now = performance.now();
+            if (now - lastFrameTime < FRAME_INTERVAL) return;
+            lastFrameTime = now;
             
             processingFrame = true;
             const startTime = performance.now();
@@ -185,12 +217,12 @@
                 tempContext.drawImage(videoElement, 0, 0, tempCanvas.width, tempCanvas.height);
                 
                 // Get the image data from the canvas
-                const imageData = tempCanvas.toDataURL('image/jpeg', 0.8);
+                const imageData = tempCanvas.toDataURL('image/jpeg', FRAME_QUALITY);
                 
                 // Show loading overlay if processing takes too long
                 const loadingTimeout = setTimeout(() => {
                     loadingOverlay.style.display = 'flex';
-                }, 500);
+                }, 1000);
                 
                 // Send the image data to the server for processing
                 const response = await fetch('/process_frame', {
@@ -220,17 +252,21 @@
                 retryCount = 0;
                 
                 // Display the processed image
-                processedImage.src = data.processed_image;
-                detectionOverlay.style.display = 'block';
+                if (data.processed_image) {
+                    processedImage.src = data.processed_image;
+                    detectionOverlay.style.display = 'block';
+                }
                 
-                // Update detection status
-                detectionStatus.textContent = data.detection_status;
+                // Update detection status with more detail
+                if (data.detection_status) {
+                    detectionStatus.textContent = data.detection_status;
+                }
                 
-                // Update stats
+                // Update stats with animation
                 if (data.detections) {
-                    redCount.textContent = data.detections.red;
-                    yellowCount.textContent = data.detections.yellow;
-                    greenCount.textContent = data.detections.green;
+                    animateCounter(redCount, parseInt(redCount.textContent), data.detections.red);
+                    animateCounter(yellowCount, parseInt(yellowCount.textContent), data.detections.yellow);
+                    animateCounter(greenCount, parseInt(greenCount.textContent), data.detections.green);
                 }
                 
                 // Update current detections
@@ -240,19 +276,7 @@
                     greenCurrent.textContent = data.current_detections.green;
                     
                     // Set status message based on current detections
-                    if (data.current_detections.red > 0) {
-                        statusMessage.textContent = 'RED LIGHT DETECTED! Please stop.';
-                        statusMessage.className = 'alert alert-danger mb-3';
-                    } else if (data.current_detections.yellow > 0) {
-                        statusMessage.textContent = 'YELLOW LIGHT DETECTED! Proceed with caution.';
-                        statusMessage.className = 'alert alert-warning mb-3';
-                    } else if (data.current_detections.green > 0) {
-                        statusMessage.textContent = 'GREEN LIGHT DETECTED! Safe to proceed.';
-                        statusMessage.className = 'alert alert-success mb-3';
-                    } else {
-                        statusMessage.textContent = 'No traffic lights detected in current frame.';
-                        statusMessage.className = 'alert alert-info mb-3';
-                    }
+                    updateStatusMessage(data.current_detections, data.detection_status);
                 }
                 
                 // Calculate and display processing time
@@ -285,7 +309,45 @@
                 }
             } finally {
                 processingFrame = false;
-                loadingOverlay.style.display = 'none';
+                // Add a small delay before processing the next frame
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+        }
+        
+        // Helper function to animate counter updates
+        function animateCounter(element, start, end) {
+            const duration = 500;
+            const startTime = performance.now();
+            
+            function update() {
+                const currentTime = performance.now();
+                const progress = Math.min((currentTime - startTime) / duration, 1);
+                
+                const current = Math.round(start + (end - start) * progress);
+                element.textContent = current;
+                
+                if (progress < 1) {
+                    requestAnimationFrame(update);
+                }
+            }
+            
+            requestAnimationFrame(update);
+        }
+        
+        // Helper function to update status message
+        function updateStatusMessage(detections, status) {
+            if (detections.red > 0) {
+                statusMessage.textContent = status;
+                statusMessage.className = 'alert alert-danger mb-3';
+            } else if (detections.yellow > 0) {
+                statusMessage.textContent = status;
+                statusMessage.className = 'alert alert-warning mb-3';
+            } else if (detections.green > 0) {
+                statusMessage.textContent = status;
+                statusMessage.className = 'alert alert-success mb-3';
+            } else {
+                statusMessage.textContent = status;
+                statusMessage.className = 'alert alert-info mb-3';
             }
         }
         
@@ -299,8 +361,8 @@
                 // Request camera permission with constraints
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: {
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 },
+                        width: { ideal: 640 },  // Reduced resolution for better performance
+                        height: { ideal: 480 },
                         facingMode: 'environment'
                     }
                 });
@@ -315,7 +377,11 @@
                 statusMessage.textContent = 'Camera started. Click "Start Detection" when ready.';
                 statusMessage.className = 'alert alert-success mb-3';
                 startCameraBtn.disabled = true;
-                startDetectionBtn.disabled = false;
+                
+                // Only enable start detection if model is loaded
+                if (modelLoaded) {
+                    startDetectionBtn.disabled = false;
+                }
                 
             } catch (error) {
                 console.error('Error starting camera:', error);
@@ -344,8 +410,8 @@
             statusMessage.className = 'alert alert-info mb-3';
             detectionOverlay.style.display = 'block';
             
-            // Start processing frames
-            processingIntervalId = setInterval(processFrame, 100);
+            // Start processing frames with the new interval
+            processingIntervalId = setInterval(processFrame, PROCESSING_INTERVAL);
         });
         
         stopDetectionBtn.addEventListener('click', () => {
