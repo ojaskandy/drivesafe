@@ -3,308 +3,413 @@
 {% block title %}Start Drive{% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-10">
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h2 class="mb-0">Live Drive Detection</h2>
-                <span class="badge bg-primary" id="connection-status">Ready</span>
-            </div>
-            <div class="card-body">
-                <div class="video-container position-relative mb-4" style="min-height: 480px; background-color: #000;">
-                    <img id="video-feed" class="w-100 h-100 object-fit-contain" style="display: none;" alt="Live video feed">
-                    <video id="local-video" class="w-100 h-100 object-fit-contain" style="display: none;" autoplay muted></video>
-                    <div id="status" class="position-absolute top-50 start-50 translate-middle text-center text-white">
-                        <i class="bi bi-camera-video fs-1 mb-2 d-block"></i>
-                        <span class="fs-5">Click "Allow Camera Access" to begin</span>
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-8 mb-4">
+            <div class="card shadow">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h3 class="mb-0">Camera Feed</h3>
+                    <span id="connection-status" class="badge bg-secondary">Initializing</span>
+                </div>
+                <div class="card-body p-0 position-relative">
+                    <div id="video-container" class="ratio ratio-16x9">
+                        <video id="camera-feed" class="w-100" autoplay playsinline></video>
+                        <canvas id="overlay-canvas" class="position-absolute top-0 start-0 w-100 h-100" style="display: none;"></canvas>
                     </div>
-                    <div id="spinner" class="position-absolute top-50 start-50 translate-middle" style="display: none;">
-                        <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;"></div>
-                        <p class="text-white mt-3">Loading YOLO model...</p>
+                    <div id="detection-overlay" class="position-absolute top-0 start-0 w-100 h-100" style="display: none;">
+                        <img id="processed-image" class="w-100 h-100" style="object-fit: cover;" />
                     </div>
-                    <div id="detection-stats" class="position-absolute bottom-0 start-0 w-100 p-2 bg-dark bg-opacity-75 text-white" style="display: none;">
-                        <div class="row">
-                            <div class="col-4">
-                                <i class="bi bi-traffic-light"></i> Traffic Lights: <span id="light-count">0</span>
+                    <div id="loading-overlay" class="position-absolute top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center bg-dark bg-opacity-75" style="display: none; z-index: 10;">
+                        <div class="text-center">
+                            <div class="spinner-border text-light mb-3" role="status">
+                                <span class="visually-hidden">Loading...</span>
                             </div>
-                            <div class="col-4">
-                                <i class="bi bi-person"></i> Pedestrians: <span id="person-count">0</span>
-                            </div>
-                            <div class="col-4">
-                                <i class="bi bi-signpost-2"></i> Lane Markings: <span id="lane-count">0</span>
-                            </div>
+                            <h5 class="text-light" id="loading-message">Starting model...</h5>
                         </div>
                     </div>
                 </div>
-                <div class="text-center">
-                    <button id="permissionBtn" class="btn btn-outline-primary btn-lg me-2">
-                        <i class="bi bi-camera"></i> Allow Camera Access
-                    </button>
-                    <button id="startBtn" class="btn btn-primary btn-lg me-2" disabled>
-                        <i class="bi bi-play-fill"></i> Start Detection
-                    </button>
-                    <button id="stopBtn" class="btn btn-danger btn-lg" disabled>
-                        <i class="bi bi-stop-fill"></i> Stop Detection
+                <div class="card-footer">
+                    <div id="status-message" class="alert alert-info mb-3">
+                        Camera not started. Click "Start Camera" to begin.
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button id="start-camera" class="btn btn-primary">
+                            <i class="bi bi-camera-video"></i> Start Camera
+                        </button>
+                        <button id="start-detection" class="btn btn-success" disabled>
+                            <i class="bi bi-play-circle"></i> Start Detection
+                        </button>
+                        <button id="stop-detection" class="btn btn-danger" disabled>
+                            <i class="bi bi-stop-circle"></i> Stop Detection
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card shadow mb-4">
+                <div class="card-header">
+                    <h3 class="mb-0">Detection Statistics</h3>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <h5 id="detection-status">No detections yet</h5>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Traffic Light</th>
+                                    <th>Count</th>
+                                    <th>Current</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>
+                                        <span class="badge rounded-pill bg-danger me-1">Red</span>
+                                        Red Light
+                                    </td>
+                                    <td id="red-count">0</td>
+                                    <td id="red-current">0</td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <span class="badge rounded-pill bg-warning me-1">Yellow</span>
+                                        Yellow Light
+                                    </td>
+                                    <td id="yellow-count">0</td>
+                                    <td id="yellow-current">0</td>
+                                </tr>
+                                <tr>
+                                    <td>
+                                        <span class="badge rounded-pill bg-success me-1">Green</span>
+                                        Green Light
+                                    </td>
+                                    <td id="green-count">0</td>
+                                    <td id="green-current">0</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <button id="reset-stats" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-arrow-counterclockwise"></i> Reset Stats
                     </button>
                 </div>
-                <div id="alerts" class="mt-4">
-                    <!-- Alerts will be dynamically added here -->
+            </div>
+            
+            <div class="card shadow">
+                <div class="card-header">
+                    <h3 class="mb-0">Model Information</h3>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <h6>Model Status:</h6>
+                        <div id="model-status" class="badge bg-info">Checking...</div>
+                    </div>
+                    <div class="mb-3">
+                        <h6>Processing Time:</h6>
+                        <div id="processing-time">0 ms</div>
+                    </div>
+                    <div class="mb-3">
+                        <h6>FPS:</h6>
+                        <div id="fps">0</div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 </div>
-{% endblock %}
 
-{% block scripts %}
 <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const videoFeed = document.getElementById('video-feed');
-        const localVideo = document.getElementById('local-video');
-        const permissionBtn = document.getElementById('permissionBtn');
-        const startBtn = document.getElementById('startBtn');
-        const stopBtn = document.getElementById('stopBtn');
-        const alerts = document.getElementById('alerts');
-        const status = document.getElementById('status');
-        const spinner = document.getElementById('spinner');
-        const detectionStats = document.getElementById('detection-stats');
+    document.addEventListener('DOMContentLoaded', () => {
+        // DOM elements
+        const startCameraBtn = document.getElementById('start-camera');
+        const startDetectionBtn = document.getElementById('start-detection');
+        const stopDetectionBtn = document.getElementById('stop-detection');
+        const resetStatsBtn = document.getElementById('reset-stats');
+        const statusMessage = document.getElementById('status-message');
         const connectionStatus = document.getElementById('connection-status');
-        let isStreaming = false;
-        let statsUpdateInterval;
-        let localStream = null;
-        let hasPermission = false;
-        let detectionCount = {
-            red: 0,
-            yellow: 0,
-            green: 0,
-            person: 0,
-            lane: 0
-        };
-
-        // Check if browser supports getUserMedia
-        const hasGetUserMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-        if (!hasGetUserMedia) {
-            addAlert('Your browser does not support camera access. Please use a modern browser like Chrome, Firefox, or Edge.', 'danger');
-            permissionBtn.disabled = true;
-        }
-
-        function updateDetectionStats() {
-            // Update the UI with current counts
-            document.getElementById('light-count').textContent = detectionCount.red + detectionCount.yellow + detectionCount.green;
-            document.getElementById('person-count').textContent = detectionCount.person;
-            document.getElementById('lane-count').textContent = detectionCount.lane;
-            
-            // Reset counts for next update
-            Object.keys(detectionCount).forEach(key => detectionCount[key] = 0);
-        }
-
-        // Listen for detection events from server
-        window.addEventListener('message', function(event) {
-            if (event.data && event.data.type === 'detection') {
-                // Update detection counts
-                event.data.detections.forEach(det => {
-                    if (det.label in detectionCount) {
-                        detectionCount[det.label]++;
+        const videoElement = document.getElementById('camera-feed');
+        const videoContainer = document.getElementById('video-container');
+        const detectionOverlay = document.getElementById('detection-overlay');
+        const processedImage = document.getElementById('processed-image');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const loadingMessage = document.getElementById('loading-message');
+        const detectionStatus = document.getElementById('detection-status');
+        const modelStatus = document.getElementById('model-status');
+        const processingTime = document.getElementById('processing-time');
+        const fps = document.getElementById('fps');
+        
+        // Statistics elements
+        const redCount = document.getElementById('red-count');
+        const yellowCount = document.getElementById('yellow-count');
+        const greenCount = document.getElementById('green-count');
+        const redCurrent = document.getElementById('red-current');
+        const yellowCurrent = document.getElementById('yellow-current');
+        const greenCurrent = document.getElementById('green-current');
+        
+        // Variables
+        let stream = null;
+        let isDetecting = false;
+        let isModelLoaded = false;
+        let isModelLoading = false;
+        let canvasContext = null;
+        let canvasElement = null;
+        let lastProcessingTime = 0;
+        let frameCount = 0;
+        let lastFpsUpdate = Date.now();
+        let processingIntervalId = null;
+        let modelCheckIntervalId = null;
+        
+        // Check model status periodically
+        function checkModelStatus() {
+            fetch('/model_status')
+                .then(response => response.json())
+                .then(data => {
+                    isModelLoaded = data.model_loaded;
+                    isModelLoading = data.model_loading;
+                    
+                    if (isModelLoaded) {
+                        modelStatus.textContent = 'Loaded';
+                        modelStatus.className = 'badge bg-success';
+                        startDetectionBtn.disabled = !stream;
+                    } else if (isModelLoading) {
+                        modelStatus.textContent = 'Loading...';
+                        modelStatus.className = 'badge bg-warning';
+                    } else {
+                        modelStatus.textContent = 'Not loaded';
+                        modelStatus.className = 'badge bg-danger';
                     }
+                })
+                .catch(error => {
+                    console.error('Error checking model status:', error);
+                    modelStatus.textContent = 'Error';
+                    modelStatus.className = 'badge bg-danger';
                 });
+        }
+        
+        // Initialize model status check
+        modelCheckIntervalId = setInterval(checkModelStatus, 2000);
+        checkModelStatus();
+        
+        // Reset detection statistics
+        function resetStats() {
+            fetch('/reset_stats', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+                .then(response => response.json())
+                .then(data => {
+                    redCount.textContent = '0';
+                    yellowCount.textContent = '0';
+                    greenCount.textContent = '0';
+                    redCurrent.textContent = '0';
+                    yellowCurrent.textContent = '0';
+                    greenCurrent.textContent = '0';
+                    detectionStatus.textContent = 'No detections yet';
+                })
+                .catch(error => {
+                    console.error('Error resetting stats:', error);
+                });
+        }
+        
+        // Process a frame from the camera
+        function processFrame() {
+            if (!isDetecting || !stream || !isModelLoaded) return;
+            
+            const startTime = performance.now();
+            
+            try {
+                // Draw the current video frame to the canvas
+                canvasContext.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+                
+                // Get the image data from the canvas
+                const imageData = canvasElement.toDataURL('image/jpeg', 0.8);
+                
+                // Send the image data to the server for processing
+                fetch('/process_frame', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        image: imageData
+                    })
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.error) {
+                            console.error('Error processing frame:', data.error);
+                            statusMessage.textContent = `Error: ${data.error}`;
+                            statusMessage.className = 'alert alert-danger mb-3';
+                            return;
+                        }
+                        
+                        // Display the processed image
+                        processedImage.src = data.processed_image;
+                        
+                        // Update detection status
+                        detectionStatus.textContent = data.detection_status;
+                        
+                        // Update stats
+                        if (data.detections) {
+                            redCount.textContent = data.detections.red;
+                            yellowCount.textContent = data.detections.yellow;
+                            greenCount.textContent = data.detections.green;
+                        }
+                        
+                        // Update current detections
+                        if (data.current_detections) {
+                            redCurrent.textContent = data.current_detections.red;
+                            yellowCurrent.textContent = data.current_detections.yellow;
+                            greenCurrent.textContent = data.current_detections.green;
+                            
+                            // Set status message based on current detections
+                            if (data.current_detections.red > 0) {
+                                statusMessage.textContent = 'RED LIGHT DETECTED! Please stop.';
+                                statusMessage.className = 'alert alert-danger mb-3';
+                            } else if (data.current_detections.yellow > 0) {
+                                statusMessage.textContent = 'YELLOW LIGHT DETECTED! Proceed with caution.';
+                                statusMessage.className = 'alert alert-warning mb-3';
+                            } else if (data.current_detections.green > 0) {
+                                statusMessage.textContent = 'GREEN LIGHT DETECTED! Safe to proceed.';
+                                statusMessage.className = 'alert alert-success mb-3';
+                            } else {
+                                statusMessage.textContent = 'No traffic lights detected in current frame.';
+                                statusMessage.className = 'alert alert-info mb-3';
+                            }
+                        }
+                        
+                        // Calculate and display processing time
+                        const endTime = performance.now();
+                        lastProcessingTime = endTime - startTime;
+                        processingTime.textContent = `${Math.round(lastProcessingTime)} ms`;
+                        
+                        // Update FPS counter
+                        frameCount++;
+                        const now = Date.now();
+                        const elapsed = now - lastFpsUpdate;
+                        if (elapsed >= 1000) {  // Update FPS every second
+                            fps.textContent = Math.round((frameCount * 1000) / elapsed);
+                            frameCount = 0;
+                            lastFpsUpdate = now;
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error processing frame:', error);
+                        statusMessage.textContent = `Network error: ${error.message}`;
+                        statusMessage.className = 'alert alert-danger mb-3';
+                    });
+            } catch (error) {
+                console.error('Error capturing frame:', error);
+                statusMessage.textContent = `Error capturing frame: ${error.message}`;
+                statusMessage.className = 'alert alert-danger mb-3';
             }
-        });
-
-        permissionBtn.addEventListener('click', async function() {
+        }
+        
+        // Start camera
+        startCameraBtn.addEventListener('click', async () => {
             try {
                 connectionStatus.textContent = 'Requesting permission...';
                 connectionStatus.className = 'badge bg-warning';
                 
                 // Request camera permission
-                localStream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { 
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 },
-                        facingMode: 'environment' // Prefer rear camera if available
-                    } 
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        facingMode: 'environment'  // Use rear camera if available
+                    }
                 });
                 
-                // Show local video preview
-                localVideo.srcObject = localStream;
-                localVideo.style.display = 'block';
-                status.style.display = 'none';
+                // Set up video element
+                videoElement.srcObject = stream;
+                videoElement.style.display = 'block';
+                
+                // Set up canvas for frame capture
+                canvasElement = document.getElementById('overlay-canvas');
+                canvasElement.width = 640;
+                canvasElement.height = 480;
+                canvasContext = canvasElement.getContext('2d');
                 
                 // Update UI
-                hasPermission = true;
-                permissionBtn.disabled = true;
-                startBtn.disabled = false;
-                connectionStatus.textContent = 'Camera Ready';
+                connectionStatus.textContent = 'Connected';
                 connectionStatus.className = 'badge bg-success';
+                statusMessage.textContent = 'Camera is running. Click "Start Detection" to begin processing.';
+                statusMessage.className = 'alert alert-info mb-3';
+                startCameraBtn.disabled = true;
+                startDetectionBtn.disabled = !isModelLoaded;
                 
-                addAlert('Camera access granted! You can now start detection.', 'success');
             } catch (error) {
                 console.error('Error accessing camera:', error);
-                connectionStatus.textContent = 'Permission Denied';
+                connectionStatus.textContent = 'Error';
                 connectionStatus.className = 'badge bg-danger';
-                addAlert('Camera permission denied. Please allow camera access and try again.', 'danger');
+                statusMessage.textContent = `Error accessing camera: ${error.message}. Please ensure you've granted camera permissions.`;
+                statusMessage.className = 'alert alert-danger mb-3';
             }
         });
-
-        startBtn.addEventListener('click', async function() {
-            if (!isStreaming && hasPermission) {
-                await startStream();
-            } else if (!hasPermission) {
-                addAlert('Please allow camera access first.', 'warning');
-            }
-        });
-
-        stopBtn.addEventListener('click', async function() {
-            if (isStreaming) {
-                await stopStream();
-            }
-        });
-
-        async function startStream() {
-            try {
-                // Don't stop the local video - we'll switch to server-processed feed instead
-                localVideo.style.display = 'none';
+        
+        // Start detection
+        startDetectionBtn.addEventListener('click', () => {
+            // Show loading overlay while model prepares
+            if (!isModelLoaded) {
+                loadingOverlay.style.display = 'flex';
+                loadingMessage.textContent = 'Loading model...';
                 
-                // Show loading state
-                spinner.style.display = 'block';
-                connectionStatus.textContent = 'Loading YOLO...';
-                connectionStatus.className = 'badge bg-info';
-                
-                // Start the video feed from server (with AI processing)
-                videoFeed.src = "{{ url_for('video_feed') }}?" + new Date().getTime(); // Add timestamp to prevent caching
-                videoFeed.style.display = 'block';
-                
-                // Update UI state
-                startBtn.disabled = true;
-                stopBtn.disabled = false;
-                isStreaming = true;
-                
-                // Handle video load
-                videoFeed.onload = function() {
-                    spinner.style.display = 'none';
-                    detectionStats.style.display = 'block';
-                    statsUpdateInterval = setInterval(updateDetectionStats, 1000);
-                    connectionStatus.textContent = 'Live Detection';
-                    connectionStatus.className = 'badge bg-success';
-                    addAlert('YOLO model loaded! Detecting traffic lights, pedestrians, and lane markings...', 'success');
-                };
-                
-                // Handle video error with retry mechanism
-                let retryCount = 0;
-                videoFeed.onerror = function() {
-                    if (retryCount < 3) {
-                        retryCount++;
-                        console.error(`Failed to load video feed, retrying (${retryCount}/3)...`);
-                        connectionStatus.textContent = `Reconnecting... (${retryCount}/3)`;
-                        connectionStatus.className = 'badge bg-warning';
-                        
-                        setTimeout(() => {
-                            if (isStreaming) {
-                                videoFeed.src = "{{ url_for('video_feed') }}?" + new Date().getTime();
-                            }
-                        }, 2000);
-                    } else {
-                        // After retries, fall back to local camera
-                        console.error('Failed to load AI-processed video feed, falling back to local camera');
-                        connectionStatus.textContent = 'Using Local Camera';
-                        connectionStatus.className = 'badge bg-secondary';
-                        
-                        // Hide the server feed and show the local camera again
-                        videoFeed.style.display = 'none';
-                        localVideo.style.display = 'block';
-                        spinner.style.display = 'none';
-                        
-                        addAlert('Could not connect to AI detection service. Using local camera without detection.', 'warning');
+                // Check model status more frequently during loading
+                const loadCheckInterval = setInterval(() => {
+                    checkModelStatus();
+                    if (isModelLoaded) {
+                        clearInterval(loadCheckInterval);
+                        loadingOverlay.style.display = 'none';
+                        startDetection();
                     }
-                };
-                
-            } catch (error) {
-                console.error('Error:', error);
-                connectionStatus.textContent = 'Error';
-                connectionStatus.className = 'badge bg-danger';
-                addAlert('Failed to start detection. Please try again.', 'danger');
-                
-                // Fall back to local camera on error
-                videoFeed.style.display = 'none';
-                localVideo.style.display = 'block';
-                spinner.style.display = 'none';
-            }
-        }
-
-        async function stopStream() {
-            try {
-                // Stop the server-side stream
-                if (isStreaming) {
-                    const response = await fetch("{{ url_for('stop_video') }}");
-                    if (!response.ok) throw new Error('Failed to stop video feed');
-                    
-                    clearInterval(statsUpdateInterval);
-                }
-                
-                // Reset UI
-                connectionStatus.textContent = 'Ready';
-                connectionStatus.className = 'badge bg-primary';
-                videoFeed.src = '';
-                videoFeed.style.display = 'none';
-                
-                // Show local camera again
-                if (localStream && localStream.active) {
-                    localVideo.style.display = 'block';
-                } else {
-                    status.style.display = 'block';
-                    status.innerHTML = '<i class="bi bi-camera-video fs-1 mb-2 d-block"></i><span class="fs-5">Click "Allow Camera Access" to begin</span>';
-                }
-                
-                // Reset buttons
-                permissionBtn.disabled = localStream && localStream.active;
-                startBtn.disabled = !hasPermission;
-                stopBtn.disabled = true;
-                isStreaming = false;
-                detectionStats.style.display = 'none';
-                spinner.style.display = 'none';
-                
-                addAlert('Detection stopped', 'info');
-                
-            } catch (error) {
-                console.error('Error:', error);
-                connectionStatus.textContent = 'Error';
-                connectionStatus.className = 'badge bg-danger';
-                addAlert('Error stopping detection: ' + error.message, 'warning');
-            }
-        }
-
-        function addAlert(message, type = 'info') {
-            const alertDiv = document.createElement('div');
-            alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
-            alertDiv.innerHTML = `
-                ${message}
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            `;
-            alerts.insertBefore(alertDiv, alerts.firstChild);
-            
-            // Auto-remove after 5 seconds
-            setTimeout(() => {
-                if (alertDiv.parentNode === alerts) {
-                    alertDiv.classList.remove('show');
-                    setTimeout(() => alertDiv.remove(), 150);
-                }
-            }, 5000);
-        }
-
-        // Handle page unload
-        window.addEventListener('beforeunload', function() {
-            if (isStreaming) {
-                fetch("{{ url_for('stop_video') }}");
-            }
-            if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
+                }, 500);
+            } else {
+                startDetection();
             }
         });
-
-        // Handle visibility change
-        document.addEventListener('visibilitychange', function() {
-            if (document.hidden && isStreaming) {
-                stopStream();
+        
+        function startDetection() {
+            isDetecting = true;
+            detectionOverlay.style.display = 'block';
+            statusMessage.textContent = 'Starting detection...';
+            statusMessage.className = 'alert alert-info mb-3';
+            startDetectionBtn.disabled = true;
+            stopDetectionBtn.disabled = false;
+            
+            // Process frames at a reasonable interval
+            processingIntervalId = setInterval(processFrame, 200);  // Process ~5 frames per second
+            
+            // Process the first frame immediately
+            processFrame();
+        }
+        
+        // Stop detection
+        stopDetectionBtn.addEventListener('click', () => {
+            isDetecting = false;
+            clearInterval(processingIntervalId);
+            detectionOverlay.style.display = 'none';
+            statusMessage.textContent = 'Detection stopped. Camera is still running.';
+            statusMessage.className = 'alert alert-info mb-3';
+            startDetectionBtn.disabled = false;
+            stopDetectionBtn.disabled = true;
+        });
+        
+        // Reset stats
+        resetStatsBtn.addEventListener('click', resetStats);
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
             }
+            clearInterval(processingIntervalId);
+            clearInterval(modelCheckIntervalId);
         });
     });
 </script>
