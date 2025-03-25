@@ -16,7 +16,11 @@
                     <video id="local-video" class="w-100 h-100 object-fit-contain" style="display: none;" autoplay muted></video>
                     <div id="status" class="position-absolute top-50 start-50 translate-middle text-center text-white">
                         <i class="bi bi-camera-video fs-1 mb-2 d-block"></i>
-                        <span class="fs-5">Click Start to begin detection</span>
+                        <span class="fs-5">Click "Allow Camera Access" to begin</span>
+                    </div>
+                    <div id="spinner" class="position-absolute top-50 start-50 translate-middle" style="display: none;">
+                        <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;"></div>
+                        <p class="text-white mt-3">Loading YOLO model...</p>
                     </div>
                     <div id="detection-stats" class="position-absolute bottom-0 start-0 w-100 p-2 bg-dark bg-opacity-75 text-white" style="display: none;">
                         <div class="row">
@@ -62,12 +66,20 @@
         const stopBtn = document.getElementById('stopBtn');
         const alerts = document.getElementById('alerts');
         const status = document.getElementById('status');
+        const spinner = document.getElementById('spinner');
         const detectionStats = document.getElementById('detection-stats');
         const connectionStatus = document.getElementById('connection-status');
         let isStreaming = false;
         let statsUpdateInterval;
         let localStream = null;
         let hasPermission = false;
+        let detectionCount = {
+            red: 0,
+            yellow: 0,
+            green: 0,
+            person: 0,
+            lane: 0
+        };
 
         // Check if browser supports getUserMedia
         const hasGetUserMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
@@ -77,12 +89,26 @@
         }
 
         function updateDetectionStats() {
-            // This would ideally be connected to a WebSocket for real-time updates
-            // For now, we'll just show some example stats
-            document.getElementById('light-count').textContent = Math.floor(Math.random() * 5);
-            document.getElementById('person-count').textContent = Math.floor(Math.random() * 3);
-            document.getElementById('lane-count').textContent = Math.floor(Math.random() * 2);
+            // Update the UI with current counts
+            document.getElementById('light-count').textContent = detectionCount.red + detectionCount.yellow + detectionCount.green;
+            document.getElementById('person-count').textContent = detectionCount.person;
+            document.getElementById('lane-count').textContent = detectionCount.lane;
+            
+            // Reset counts for next update
+            Object.keys(detectionCount).forEach(key => detectionCount[key] = 0);
         }
+
+        // Listen for detection events from server
+        window.addEventListener('message', function(event) {
+            if (event.data && event.data.type === 'detection') {
+                // Update detection counts
+                event.data.detections.forEach(det => {
+                    if (det.label in detectionCount) {
+                        detectionCount[det.label]++;
+                    }
+                });
+            }
+        });
 
         permissionBtn.addEventListener('click', async function() {
             try {
@@ -120,18 +146,10 @@
         });
 
         startBtn.addEventListener('click', async function() {
-            if (!isStreaming) {
-                if (hasPermission) {
-                    // Stop local preview before starting server-side processing
-                    if (localStream) {
-                        localStream.getTracks().forEach(track => track.stop());
-                        localVideo.srcObject = null;
-                        localVideo.style.display = 'none';
-                    }
-                    await startStream();
-                } else {
-                    addAlert('Please allow camera access first.', 'warning');
-                }
+            if (!isStreaming && hasPermission) {
+                await startStream();
+            } else if (!hasPermission) {
+                addAlert('Please allow camera access first.', 'warning');
             }
         });
 
@@ -143,13 +161,16 @@
 
         async function startStream() {
             try {
-                status.style.display = 'block';
-                status.innerHTML = '<div class="spinner-border text-light" role="status"></div><br><span class="mt-2">Starting detection...</span>';
-                connectionStatus.textContent = 'Processing...';
+                // Don't stop the local video - we'll switch to server-processed feed instead
+                localVideo.style.display = 'none';
+                
+                // Show loading state
+                spinner.style.display = 'block';
+                connectionStatus.textContent = 'Loading YOLO...';
                 connectionStatus.className = 'badge bg-info';
                 
-                // Start the video feed from server
-                videoFeed.src = "{{ url_for('video_feed') }}";
+                // Start the video feed from server (with AI processing)
+                videoFeed.src = "{{ url_for('video_feed') }}?" + new Date().getTime(); // Add timestamp to prevent caching
                 videoFeed.style.display = 'block';
                 
                 // Update UI state
@@ -159,31 +180,41 @@
                 
                 // Handle video load
                 videoFeed.onload = function() {
-                    status.style.display = 'none';
+                    spinner.style.display = 'none';
                     detectionStats.style.display = 'block';
                     statsUpdateInterval = setInterval(updateDetectionStats, 1000);
                     connectionStatus.textContent = 'Live Detection';
                     connectionStatus.className = 'badge bg-success';
-                    addAlert('Detection started! Looking for traffic lights, pedestrians, and lane markings...', 'success');
+                    addAlert('YOLO model loaded! Detecting traffic lights, pedestrians, and lane markings...', 'success');
                 };
                 
                 // Handle video error with retry mechanism
+                let retryCount = 0;
                 videoFeed.onerror = function() {
-                    console.error('Failed to load video feed, retrying...');
-                    connectionStatus.textContent = 'Reconnecting...';
-                    connectionStatus.className = 'badge bg-warning';
-                    
-                    // Add a slight delay before retrying
-                    setTimeout(() => {
-                        if (isStreaming) {
-                            videoFeed.src = "{{ url_for('video_feed') }}?" + new Date().getTime(); // Add timestamp to avoid caching
-                        }
-                    }, 2000);
-                    
-                    // After 3 retries, give up
-                    videoFeed.onerror = function() {
-                        throw new Error('Failed to load video feed after multiple attempts');
-                    };
+                    if (retryCount < 3) {
+                        retryCount++;
+                        console.error(`Failed to load video feed, retrying (${retryCount}/3)...`);
+                        connectionStatus.textContent = `Reconnecting... (${retryCount}/3)`;
+                        connectionStatus.className = 'badge bg-warning';
+                        
+                        setTimeout(() => {
+                            if (isStreaming) {
+                                videoFeed.src = "{{ url_for('video_feed') }}?" + new Date().getTime();
+                            }
+                        }, 2000);
+                    } else {
+                        // After retries, fall back to local camera
+                        console.error('Failed to load AI-processed video feed, falling back to local camera');
+                        connectionStatus.textContent = 'Using Local Camera';
+                        connectionStatus.className = 'badge bg-secondary';
+                        
+                        // Hide the server feed and show the local camera again
+                        videoFeed.style.display = 'none';
+                        localVideo.style.display = 'block';
+                        spinner.style.display = 'none';
+                        
+                        addAlert('Could not connect to AI detection service. Using local camera without detection.', 'warning');
+                    }
                 };
                 
             } catch (error) {
@@ -191,32 +222,45 @@
                 connectionStatus.textContent = 'Error';
                 connectionStatus.className = 'badge bg-danger';
                 addAlert('Failed to start detection. Please try again.', 'danger');
-                await stopStream();
+                
+                // Fall back to local camera on error
+                videoFeed.style.display = 'none';
+                localVideo.style.display = 'block';
+                spinner.style.display = 'none';
             }
         }
 
         async function stopStream() {
             try {
-                clearInterval(statsUpdateInterval);
-                connectionStatus.textContent = 'Stopping...';
-                connectionStatus.className = 'badge bg-warning';
-                
-                // Stop the video feed
-                const response = await fetch("{{ url_for('stop_video') }}");
-                if (!response.ok) throw new Error('Failed to stop video feed');
+                // Stop the server-side stream
+                if (isStreaming) {
+                    const response = await fetch("{{ url_for('stop_video') }}");
+                    if (!response.ok) throw new Error('Failed to stop video feed');
+                    
+                    clearInterval(statsUpdateInterval);
+                }
                 
                 // Reset UI
-                videoFeed.src = '';
-                videoFeed.style.display = 'none';
-                permissionBtn.disabled = false;
-                startBtn.disabled = true;
-                stopBtn.disabled = true;
-                isStreaming = false;
-                status.style.display = 'block';
-                status.innerHTML = '<i class="bi bi-camera-video fs-1 mb-2 d-block"></i><span class="fs-5">Click Start to begin detection</span>';
-                detectionStats.style.display = 'none';
                 connectionStatus.textContent = 'Ready';
                 connectionStatus.className = 'badge bg-primary';
+                videoFeed.src = '';
+                videoFeed.style.display = 'none';
+                
+                // Show local camera again
+                if (localStream && localStream.active) {
+                    localVideo.style.display = 'block';
+                } else {
+                    status.style.display = 'block';
+                    status.innerHTML = '<i class="bi bi-camera-video fs-1 mb-2 d-block"></i><span class="fs-5">Click "Allow Camera Access" to begin</span>';
+                }
+                
+                // Reset buttons
+                permissionBtn.disabled = localStream && localStream.active;
+                startBtn.disabled = !hasPermission;
+                stopBtn.disabled = true;
+                isStreaming = false;
+                detectionStats.style.display = 'none';
+                spinner.style.display = 'none';
                 
                 addAlert('Detection stopped', 'info');
                 
