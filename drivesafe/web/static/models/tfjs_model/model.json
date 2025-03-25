@@ -1,1 +1,14 @@
-{"modelTopology":{"class_name":"Functional","config":{"name":"model","layers":[]},"backend":"tensorflow"},"weightsManifest":[]}
+{
+  "format": "graph-model",
+  "modelTopology": {
+    "node": [],
+    "library": {},
+    "versions": {}
+  },
+  "weightsManifest": [
+    {
+      "paths": ["group1-shard1of1.bin"],
+      "weights": []
+    }
+  ]
+}
