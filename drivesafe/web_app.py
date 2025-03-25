@@ -26,6 +26,7 @@ MODEL_FILENAME = "best_traffic_small_yolo.pt"
 # Global variables
 yolo_model = None
 model_lock = threading.Lock()
+yolo_error_message = None
 
 def download_model():
     """Download the model from Hugging Face if not already cached."""
@@ -59,23 +60,32 @@ def download_model():
 
 def init_yolo_model():
     """Initialize the YOLO model."""
-    global yolo_model
+    global yolo_model, yolo_error_message
     try:
         model_path = download_model()
         if model_path:
-            from ultralytics import YOLO
-            yolo_model = YOLO(model_path)
-            logger.info("YOLO model loaded successfully")
+            # Import here to prevent issues if ultralytics is not installed
+            try:
+                from ultralytics import YOLO
+                yolo_model = YOLO(model_path)
+                logger.info("YOLO model loaded successfully")
+            except ImportError as e:
+                yolo_error_message = f"YOLO import error: {str(e)}"
+                logger.error(yolo_error_message)
     except Exception as e:
-        logger.error(f"Error loading YOLO model: {str(e)}")
+        yolo_error_message = f"Error loading YOLO model: {str(e)}"
+        logger.error(yolo_error_message)
         logger.error(traceback.format_exc())
         yolo_model = None
 
 def detect_lanes(frame):
     """Process a frame to detect lanes."""
     try:
+        # Create a copy to avoid modifying the original
+        result_frame = frame.copy()
+        
         # Convert to grayscale
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(result_frame, cv2.COLOR_BGR2GRAY)
         logger.debug("Converted frame to grayscale")
         
         # Apply Gaussian blur
@@ -114,11 +124,11 @@ def detect_lanes(frame):
         if lines is not None:
             for line in lines:
                 x1, y1, x2, y2 = line[0]
-                cv2.line(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.line(result_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
             
-            return frame, len(lines)
+            return result_frame, len(lines)
         
-        return frame, 0
+        return result_frame, 0
         
     except Exception as e:
         logger.error(f"Error in lane detection: {str(e)}")
@@ -166,13 +176,14 @@ def process_frame():
         detection_status = []
         yolo_error = None
         lane_error = None
+        processed_frame = frame.copy()
         
         # Try YOLO detection if available
         if yolo_model is not None:
             try:
                 with model_lock:
-                    results = yolo_model(frame)
-                frame = results[0].plot()
+                    results = yolo_model(processed_frame)
+                processed_frame = results[0].plot()
                 detection_status.append("Traffic light detection active")
             except Exception as e:
                 yolo_error = str(e)
@@ -181,7 +192,13 @@ def process_frame():
         
         # Try lane detection
         try:
-            frame, num_lanes = detect_lanes(frame)
+            if yolo_model is None:
+                # If YOLO failed, use original frame for lane detection
+                processed_frame, num_lanes = detect_lanes(frame)
+            else:
+                # If YOLO succeeded, add lanes to the YOLO-processed frame
+                processed_frame, num_lanes = detect_lanes(processed_frame)
+                
             if num_lanes > 0:
                 detection_status.append(f"Lane detection active ({num_lanes} lanes)")
         except Exception as e:
@@ -190,7 +207,7 @@ def process_frame():
             logger.error(traceback.format_exc())
         
         # Convert processed frame back to base64
-        _, buffer = cv2.imencode('.jpg', frame)
+        _, buffer = cv2.imencode('.jpg', processed_frame)
         img_base64 = base64.b64encode(buffer).decode('utf-8')
         
         # Prepare status message
@@ -229,7 +246,7 @@ def get_model_status():
         'opencv_loaded': opencv_status,
         'yolo_loaded': yolo_model is not None,
         'opencv_error': opencv_error,
-        'yolo_error': None if yolo_model is not None else "Model not loaded"
+        'yolo_error': yolo_error_message if yolo_model is None else None
     })
 
 if __name__ == '__main__':
