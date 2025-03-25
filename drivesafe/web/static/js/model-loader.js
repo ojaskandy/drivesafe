@@ -230,19 +230,24 @@ class ModelLoader {
         try {
             this.setStatus(STATUS.LOADING, "Warming up model...");
             
-            // Create a dummy tensor for warmup
-            const dummyTensor = tf.zeros([1, 640, 480, 3]);
+            // Create a dummy tensor with correct format (int32)
+            const dummyTensor = tf.tidy(() => {
+                // Create zeros tensor with correct shape
+                const zeros = tf.zeros([1, 640, 480, 3]);
+                // Convert to int32 which is what the model expects
+                return tf.cast(zeros, 'int32');
+            });
             
-            // Run inference on the dummy tensor
-            const result = await this.model.executeAsync(dummyTensor);
+            // Run inference on the dummy tensor with correct input format
+            const result = await this.model.executeAsync({'image_tensor': dummyTensor});
             
             // Clean up memory
-            tf.dispose([dummyTensor, ...result]);
+            tf.dispose([dummyTensor, ...(Array.isArray(result) ? result : [result])]);
             
             console.log("Model warmup complete");
         } catch (err) {
             console.error("Error during model warmup:", err);
-            // Continue even if warmup fails
+            // Continue even if warmup fails - we'll handle format in actual detection
         }
     }
     
@@ -278,6 +283,7 @@ class ModelLoader {
             // Run model inference
             let result;
             try {
+                // Use the correct input format for TF.js SSD model
                 result = await this.model.executeAsync({'image_tensor': tensor});
             } catch (execError) {
                 console.error("Model execution error:", execError);
@@ -292,10 +298,11 @@ class ModelLoader {
                     const altTensor = tf.tidy(() => {
                         const pixels = tf.browser.fromPixels(videoElement);
                         const resized = tf.image.resizeBilinear(pixels, [640, 480]);
-                        const normalized = resized.div(255.0);
-                        return normalized.expandDims(0);
+                        // Try without normalization
+                        return resized.expandDims(0);
                     });
                     
+                    // Try direct input without wrapping in object
                     result = await this.model.executeAsync(altTensor);
                     tf.dispose(altTensor);
                 } catch (altError) {
@@ -314,69 +321,102 @@ class ModelLoader {
             };
             
             try {
-                // First try SSD MobileNet format (our fallback model)
+                // Verify result is an array with expected elements
+                if (!Array.isArray(result) || result.length < 4 || !result[0] || !result[1] || !result[2] || !result[3]) {
+                    console.warn("Unexpected result format:", result);
+                    throw new Error("Unexpected result format");
+                }
+                
+                // Safely unpack the result
                 const [boxes, scores, classes, valid_detections] = result;
                 
-                // Convert tensors to arrays for easier use
-                const boxesArray = boxes.arraySync()[0];
-                const scoresArray = scores.arraySync()[0];
-                const classesArray = classes.arraySync()[0];
-                const validDetections = valid_detections.arraySync()[0];
+                // Convert tensors to arrays for easier use - check each is defined before calling arraySync
+                const boxesArray = boxes && boxes.arraySync ? boxes.arraySync()[0] : [];
+                const scoresArray = scores && scores.arraySync ? scores.arraySync()[0] : [];
+                const classesArray = classes && classes.arraySync ? classes.arraySync()[0] : [];
+                // Get the number of valid detections (default to 0 if undefined)
+                const validDetections = valid_detections && valid_detections.arraySync ? 
+                    valid_detections.arraySync()[0] : 0;
                 
-                // SSD MobileNet detects general objects, so we'll map some classes to traffic lights
-                // Class 10 is traffic light in COCO dataset
-                for (let i = 0; i < validDetections; i++) {
-                    if (scoresArray[i] > 0.4) { // Confidence threshold
-                        const classId = Math.floor(classesArray[i]);
-                        let mappedClass = 0; // Default to red light
-                        let confidence = scoresArray[i];
-                        
-                        // Class 10 in COCO is "traffic light"
-                        if (classId === 10) {
-                            // Simulate traffic light colors based on position
-                            // Top third of the light is red, middle is yellow, bottom is green
-                            const [y1, x1, y2, x2] = boxesArray[i];
-                            const height = y2 - y1;
-                            const centerY = y1 + (height / 2);
+                // If we have valid detection data, process it
+                if (boxesArray && scoresArray && classesArray && validDetections) {
+                    // SSD MobileNet detects general objects, so we'll map some classes to traffic lights
+                    // Class 10 is traffic light in COCO dataset
+                    for (let i = 0; i < validDetections; i++) {
+                        if (scoresArray[i] > 0.4) { // Confidence threshold
+                            const classId = Math.floor(classesArray[i]);
+                            let mappedClass = 0; // Default to red light
+                            let confidence = scoresArray[i];
                             
-                            if (centerY < 0.4) {
-                                mappedClass = 0; // Red (top)
-                                counts.red++;
-                            } else if (centerY < 0.6) {
-                                mappedClass = 1; // Yellow (middle)
-                                counts.yellow++;
-                            } else {
-                                mappedClass = 2; // Green (bottom)
-                                counts.green++;
+                            // Class 10 in COCO is "traffic light"
+                            if (classId === 10) {
+                                // Simulate traffic light colors based on position
+                                // Top third of the light is red, middle is yellow, bottom is green
+                                const [y1, x1, y2, x2] = boxesArray[i];
+                                const height = y2 - y1;
+                                const centerY = y1 + (height / 2);
+                                
+                                if (centerY < 0.4) {
+                                    mappedClass = 0; // Red (top)
+                                    counts.red++;
+                                } else if (centerY < 0.6) {
+                                    mappedClass = 1; // Yellow (middle)
+                                    counts.yellow++;
+                                } else {
+                                    mappedClass = 2; // Green (bottom)
+                                    counts.green++;
+                                }
+                                
+                                detections.push({
+                                    box: boxesArray[i], // [y1, x1, y2, x2] normalized coordinates
+                                    score: confidence,
+                                    class: mappedClass
+                                });
+                            } else if (classId === 1) { // Person (class 1 in COCO)
+                                // Just for demonstration
+                                counts.unknown++;
+                                detections.push({
+                                    box: boxesArray[i],
+                                    score: confidence,
+                                    class: 3 // Unknown class
+                                });
                             }
-                            
-                            detections.push({
-                                box: boxesArray[i], // [y1, x1, y2, x2] normalized coordinates
-                                score: confidence,
-                                class: mappedClass
-                            });
-                        } else if (classId === 1) { // Person (class 1 in COCO)
-                            // Just for demonstration
-                            counts.unknown++;
-                            detections.push({
-                                box: boxesArray[i],
-                                score: confidence,
-                                class: 3 // Unknown class
-                            });
                         }
                     }
+                } else {
+                    console.warn("Invalid detection data arrays");
                 }
             } catch (err) {
                 console.warn("Error processing model results:", err);
                 // If processing fails, fall back to simulation
                 return this.simulateTrafficLights();
             } finally {
-                // Clean up memory
-                tf.dispose(result);
-                tf.dispose(tensor);
+                // Clean up memory - safely dispose all tensors
+                if (Array.isArray(result)) {
+                    result.forEach(tensor => {
+                        if (tensor && typeof tensor.dispose === 'function') {
+                            tensor.dispose();
+                        }
+                    });
+                } else if (result && typeof result.dispose === 'function') {
+                    result.dispose();
+                }
+                
+                if (tensor && typeof tensor.dispose === 'function') {
+                    tensor.dispose();
+                }
             }
             
-            // If no detections were found, return empty results instead of simulation
+            // Return results or simulation if nothing was detected
+            if (detections.length === 0) {
+                // If nothing detected, return empty results
+                return {
+                    detections: [],
+                    counts: { red: 0, yellow: 0, green: 0, unknown: 0 },
+                    simulated: false
+                };
+            }
+            
             return {
                 detections,
                 counts,
