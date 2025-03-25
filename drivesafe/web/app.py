@@ -7,8 +7,8 @@ from datetime import datetime
 import sys
 from werkzeug.utils import secure_filename
 
-# Add the Traffic-Light-Detection-Using-YOLOv3 directory to Python path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'Traffic-Light-Detection-Using-YOLOv3'))
+# Add the parent directory to Python path
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from models import Darknet
 from utils.utils import non_max_suppression, scale_coords
 from utils.datasets import letterbox
@@ -22,18 +22,8 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Initialize model
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-cfg_path = '../Traffic-Light-Detection-Using-YOLOv3/cfg/yolov3-spp-6cls.cfg'
-weights_path = '../Traffic-Light-Detection-Using-YOLOv3/weights/best_model_12 (1).pt'
-
-model = Darknet(cfg_path)
+model = Darknet(None)  # Passing None as we're using a simplified model for testing
 model.to(device)
-
-# Load weights
-checkpoint = torch.load(weights_path, map_location=device, weights_only=False)
-if isinstance(checkpoint, dict) and 'model' in checkpoint:
-    model.load_state_dict(checkpoint['model'], strict=False)
-else:
-    model.load_state_dict(checkpoint, strict=False)
 model.eval()
 
 # Class names
