@@ -52,4 +52,13 @@ models/traffic_light/best_traffic_small_yolo.pt
 drivesafe/models/traffic_light/best_traffic_small_yolo.pt
 drivesafe/best_traffic_small_yolo.pt
 # Keep the root copy as the main one
-# best_traffic_small_yolo.pt 
+# best_traffic_small_yolo.pt
+
+# Model files and cache
+*.pt
+.cache/
+~/.cache/
+
+# Logs
+*.log
+logs/ 

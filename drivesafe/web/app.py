@@ -10,6 +10,8 @@ import threading
 from queue import Queue
 import traceback
 import cv2
+import requests
+from tqdm import tqdm
 
 # Configure logging with more detail
 logging.basicConfig(
@@ -47,6 +49,11 @@ model_status = {
     'opencv_error': None,
     'last_error': None
 }
+
+# Constants
+HUGGINGFACE_MODEL_URL = "https://huggingface.co/ojaskandy/traffic-light-detection-yolo/resolve/main/best_traffic_small_yolo.pt"
+MODEL_CACHE_DIR = os.path.expanduser("~/.cache/drivesafe/models")
+MODEL_FILENAME = "best_traffic_small_yolo.pt"
 
 def initialize_dependencies():
     """Initialize all required dependencies with detailed error tracking"""
@@ -141,97 +148,44 @@ def detect_lanes(frame):
         logger.error(f"Error in lane detection: {str(e)}\n{traceback.format_exc()}")
         return frame, 0
 
-def init_yolo_model():
-    """Initialize the YOLO model with comprehensive error handling"""
-    global yolo_model, model_status
+def download_model():
+    """Download the model from Hugging Face if not already cached."""
+    os.makedirs(MODEL_CACHE_DIR, exist_ok=True)
+    model_path = os.path.join(MODEL_CACHE_DIR, MODEL_FILENAME)
     
-    with model_lock:
-        if yolo_model is not None:
-            return yolo_model
+    if not os.path.exists(model_path):
+        logger.info("Downloading model from Hugging Face...")
+        response = requests.get(HUGGINGFACE_MODEL_URL, stream=True)
+        response.raise_for_status()
         
-        try:
-            # Initialize dependencies first
-            if not initialize_dependencies():
-                error_msg = "Failed to initialize dependencies for YOLO model"
-                logger.error(error_msg)
-                model_status['yolo_error'] = error_msg
-                return None
-            
-            # Initialize device and set PyTorch settings
-            try:
-                if torch.cuda.is_available():
-                    device = torch.device('cuda')
-                    torch.backends.cuda.matmul.allow_tf32 = True
-                    torch.backends.cudnn.allow_tf32 = True
-                else:
-                    device = torch.device('cpu')
-                    if hasattr(torch, 'set_num_threads'):
-                        torch.set_num_threads(4)
-                
-                logger.info(f"Using device: {device}")
-            except Exception as e:
-                error_msg = f"Error setting up PyTorch device: {str(e)}\n{traceback.format_exc()}"
-                logger.error(error_msg)
-                model_status['yolo_error'] = error_msg
-                return None
-            
-            # Look for model in multiple locations
-            model_paths = [
-                'best_traffic_small_yolo.pt',
-                os.path.join('models', 'traffic_light', 'best_traffic_small_yolo.pt'),
-                os.path.join(os.path.dirname(__file__), 'best_traffic_small_yolo.pt'),
-                os.path.join(os.path.dirname(__file__), 'models', 'traffic_light', 'best_traffic_small_yolo.pt')
-            ]
-            
-            # Log all attempted paths
-            logger.info("Attempting to load model from the following paths:")
-            for path in model_paths:
-                logger.info(f"- {os.path.abspath(path)}")
-            
-            model_loaded = False
-            last_error = None
-            
-            for model_path in model_paths:
-                try:
-                    if os.path.exists(model_path):
-                        logger.info(f"Found model at: {os.path.abspath(model_path)}")
-                        logger.info(f"File size: {os.path.getsize(model_path)} bytes")
-                        
-                        yolo_model = YOLO(model_path)
-                        if device.type == 'cpu':
-                            yolo_model.cpu()
-                        else:
-                            yolo_model.to(device)
-                        
-                        # Verify model loaded correctly
-                        dummy_input = torch.zeros((1, 3, 640, 480), device=device)
-                        _ = yolo_model(dummy_input)
-                        
-                        logger.info("Model loaded and verified successfully")
-                        model_loaded = True
-                        model_status['yolo_loaded'] = True
-                        model_status['yolo_error'] = None
-                        break
-                    else:
-                        logger.warning(f"Model not found at: {os.path.abspath(model_path)}")
-                except Exception as e:
-                    last_error = f"Error loading model from {model_path}: {str(e)}\n{traceback.format_exc()}"
-                    logger.error(last_error)
-                    continue
-            
-            if not model_loaded:
-                error_msg = f"Could not load model from any path. Last error: {last_error}"
-                logger.error(error_msg)
-                model_status['yolo_error'] = error_msg
-                return None
-            
-            return yolo_model
-            
-        except Exception as e:
-            error_msg = f"Failed to initialize YOLO model: {str(e)}\n{traceback.format_exc()}"
-            logger.error(error_msg)
-            model_status['yolo_error'] = error_msg
-            return None
+        total_size = int(response.headers.get('content-length', 0))
+        block_size = 8192
+        
+        with open(model_path, 'wb') as f:
+            with tqdm(total=total_size, unit='iB', unit_scale=True) as pbar:
+                for data in response.iter_content(block_size):
+                    f.write(data)
+                    pbar.update(len(data))
+        
+        logger.info(f"Model downloaded successfully to {model_path}")
+    else:
+        logger.info("Using cached model file")
+    
+    return model_path
+
+def init_yolo_model():
+    """Initialize the YOLO model."""
+    try:
+        model_path = download_model()
+        import torch
+        model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path)
+        model.conf = 0.5  # Confidence threshold
+        logger.info("YOLO model loaded successfully")
+        return model
+    except Exception as e:
+        logger.error(f"Error loading YOLO model: {str(e)}")
+        logger.error(traceback.format_exc())
+        return None
 
 def process_frame(frame, save_path=None):
     """Process a frame with YOLO model and/or lane detection"""
@@ -329,52 +283,39 @@ def start_drive():
 
 @app.route('/process_frame', methods=['POST'])
 def process_frame():
+    """Process a frame from the camera feed."""
     try:
         # Get the image data from the request
-        data = request.json
+        data = request.get_json()
         if not data or 'image' not in data:
-            logger.error("No image data received")
-            return jsonify({'error': 'No image data received'}), 400
+            return jsonify({'error': 'No image data received'})
         
-        try:
-            # Decode the base64 image
-            image_data = data['image'].split(',')[1]
-            image_bytes = base64.b64decode(image_data)
-            np_arr = np.frombuffer(image_bytes, np.uint8)
-            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-            
-            if frame is None:
-                logger.error("Failed to decode image")
-                return jsonify({'error': 'Failed to decode image'}), 400
-            
-            # Resize frame for faster processing
-            frame = cv2.resize(frame, (640, 480))
-            
-            # Process frame with lane detection
-            processed_frame, num_lanes = detect_lanes(frame)
-            
-            # Encode the processed frame back to base64
-            _, buffer = cv2.imencode('.jpg', processed_frame)
-            processed_image = base64.b64encode(buffer).decode('utf-8')
-            
-            # Return the results
-            return jsonify({
-                'processed_image': f'data:image/jpeg;base64,{processed_image}',
-                'detection_status': f"Lane detection active ({num_lanes} lanes)" if num_lanes > 0 else "No lanes detected",
-                'model_loaded': True,
-                'detections': {'red': 0, 'yellow': 0, 'green': 0, 'none': 0},
-                'current_detections': {'red': 0, 'yellow': 0, 'green': 0, 'none': 0}
-            })
-            
-        except Exception as e:
-            error_msg = f"Error processing frame: {str(e)}\n{traceback.format_exc()}"
-            logger.error(error_msg)
-            return jsonify({'error': error_msg}), 500
-            
+        # Convert base64 image to OpenCV format
+        import base64
+        img_data = data['image'].split(',')[1]
+        img_bytes = base64.b64decode(img_data)
+        img_np = np.frombuffer(img_bytes, np.uint8)
+        frame = cv2.imdecode(img_np, cv2.IMREAD_COLOR)
+        
+        if frame is None:
+            return jsonify({'error': 'Invalid image data'})
+        
+        # Process frame with lane detection
+        processed_frame = process_frame_with_lanes(frame)
+        
+        # Convert processed frame back to base64
+        _, buffer = cv2.imencode('.jpg', processed_frame)
+        img_base64 = base64.b64encode(buffer).decode('utf-8')
+        
+        return jsonify({
+            'processed_image': f'data:image/jpeg;base64,{img_base64}',
+            'detection_status': 'Lane detection successful'
+        })
+        
     except Exception as e:
-        error_msg = f"Error in process_frame endpoint: {str(e)}\n{traceback.format_exc()}"
-        logger.error(error_msg)
-        return jsonify({'error': error_msg}), 500
+        logger.error(f"Error processing frame: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({'error': str(e)})
 
 @app.route('/stats', methods=['GET'])
 def get_stats():
@@ -400,14 +341,17 @@ def reset_stats():
 
 @app.route('/model_status', methods=['GET'])
 def get_model_status():
-    """Get model status - for now, just OpenCV"""
-    return jsonify({
-        'yolo_loaded': False,
-        'yolo_error': "YOLO model temporarily disabled",
+    """Get the status of model loading."""
+    global yolo_model
+    
+    status = {
         'opencv_loaded': True,
+        'yolo_loaded': yolo_model is not None,
         'opencv_error': None,
-        'last_error': None
-    })
+        'yolo_error': None if yolo_model is not None else "Model not loaded"
+    }
+    
+    return jsonify(status)
 
 if __name__ == '__main__':
     # Initialize dependencies at startup
