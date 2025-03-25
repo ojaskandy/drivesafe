@@ -9,6 +9,62 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.20.0"></script>
     <!-- TensorFlow.js backend for WebGL acceleration -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@3.20.0"></script>
+    <style>
+        .video-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+            margin-bottom: 1rem;
+        }
+        
+        .video-feed {
+            flex: 1;
+            min-width: 300px;
+            max-width: 640px;
+        }
+        
+        .processed-feed {
+            flex: 1;
+            min-width: 300px;
+            max-width: 640px;
+            position: relative;
+            background-color: #000;
+            border-radius: var(--border-radius);
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .processed-feed h3 {
+            color: white;
+            margin: 0;
+            padding: 0.5rem;
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+        
+        #processed-canvas {
+            display: block;
+            width: 100%;
+            height: auto;
+        }
+        
+        .detection-label {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        @media (max-width: 768px) {
+            .video-container {
+                flex-direction: column;
+            }
+        }
+    </style>
 </head>
 <body>
     <div class="header">
@@ -31,8 +87,17 @@
             <div class="video-feed">
                 <h3>Live Camera Feed</h3>
                 <video id="camera-feed" autoplay playsinline></video>
-                <canvas id="overlay-canvas" width="640" height="480"></canvas>
                 <div id="loading-indicator" class="loading-indicator" style="display: none;">
+                    <div class="spinner"></div>
+                    <p>Processing...</p>
+                </div>
+            </div>
+            
+            <div class="processed-feed">
+                <h3>Detection View</h3>
+                <canvas id="processed-canvas" width="640" height="480"></canvas>
+                <div class="detection-label" id="detection-label">No detection active</div>
+                <div id="processed-loading-indicator" class="loading-indicator" style="display: none;">
                     <div class="spinner"></div>
                     <p>Processing...</p>
                 </div>
@@ -87,8 +152,9 @@
     <script>
         // DOM Elements
         const cameraFeed = document.getElementById('camera-feed');
-        const overlayCanvas = document.getElementById('overlay-canvas');
+        const processedCanvas = document.getElementById('processed-canvas');
         const loadingIndicator = document.getElementById('loading-indicator');
+        const processedLoadingIndicator = document.getElementById('processed-loading-indicator');
         const startCameraBtn = document.getElementById('start-camera');
         const stopCameraBtn = document.getElementById('stop-camera');
         const toggleDetectionBtn = document.getElementById('toggle-detection');
@@ -104,6 +170,7 @@
         const fpsElement = document.getElementById('fps');
         const downloadProgressContainer = document.getElementById('download-progress-container');
         const downloadProgressBar = document.getElementById('download-progress');
+        const detectionLabelElement = document.getElementById('detection-label');
 
         // Application state
         let stream = null;
@@ -112,6 +179,7 @@
         let frameCount = 0;
         let lastFpsUpdate = 0;
         let animationFrameId = null;
+        let liveCanvasContext = null;
         
         // Initialize the application
         document.addEventListener('DOMContentLoaded', initialize);
@@ -216,9 +284,9 @@
                 // Start the video
                 await cameraFeed.play();
                 
-                // Update the canvas size to match the video
-                overlayCanvas.width = cameraFeed.videoWidth;
-                overlayCanvas.height = cameraFeed.videoHeight;
+                // Update canvas sizes to match the video
+                processedCanvas.width = cameraFeed.videoWidth;
+                processedCanvas.height = cameraFeed.videoHeight;
                 
                 // Update UI
                 cameraStatusElement.textContent = 'Active';
@@ -250,8 +318,8 @@
             }
             
             // Clear the canvas
-            const ctx = overlayCanvas.getContext('2d');
-            ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            const ctx = processedCanvas.getContext('2d');
+            ctx.clearRect(0, 0, processedCanvas.width, processedCanvas.height);
             
             // Update UI
             cameraStatusElement.textContent = 'Inactive';
@@ -299,8 +367,8 @@
                 }
                 
                 // Clear the canvas
-                const ctx = overlayCanvas.getContext('2d');
-                ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+                const ctx = processedCanvas.getContext('2d');
+                ctx.clearRect(0, 0, processedCanvas.width, processedCanvas.height);
                 
                 // Reset statistics
                 trafficLightCountElement.textContent = '0';
@@ -309,6 +377,7 @@
                 greenLightCountElement.textContent = '0';
                 processingTimeElement.textContent = '0';
                 fpsElement.textContent = '0';
+                detectionLabelElement.textContent = 'No detection active';
                 
                 showInfo('Traffic light detection stopped');
             }
@@ -318,11 +387,16 @@
             if (!isDetecting) return;
             
             try {
-                // Show loading indicator
+                // Show loading indicators
                 loadingIndicator.style.display = 'flex';
+                processedLoadingIndicator.style.display = 'flex';
                 
                 // Measure processing time
                 const startTime = performance.now();
+                
+                // First, draw the camera feed to the processed canvas
+                const ctx = processedCanvas.getContext('2d');
+                ctx.drawImage(cameraFeed, 0, 0, processedCanvas.width, processedCanvas.height);
                 
                 // Perform traffic light detection
                 const result = await window.trafficLightModel.detectTrafficLights(cameraFeed);
@@ -330,11 +404,22 @@
                 // Calculate processing time
                 const processingTime = performance.now() - startTime;
                 
-                // Draw the detections on the canvas
-                window.trafficLightModel.drawDetections(overlayCanvas, result);
+                // Draw the detections on the processed canvas
+                window.trafficLightModel.drawDetections(processedCanvas, result);
+                
+                // Update detection label
+                const totalLights = result.counts.red + result.counts.yellow + result.counts.green + result.counts.unknown;
+                if (totalLights > 0) {
+                    let statusText = `Detected: `;
+                    if (result.counts.red > 0) statusText += `${result.counts.red} Red `;
+                    if (result.counts.yellow > 0) statusText += `${result.counts.yellow} Yellow `;
+                    if (result.counts.green > 0) statusText += `${result.counts.green} Green `;
+                    detectionLabelElement.textContent = statusText;
+                } else {
+                    detectionLabelElement.textContent = 'No traffic lights detected';
+                }
                 
                 // Update statistics
-                const totalLights = result.counts.red + result.counts.yellow + result.counts.green + result.counts.unknown;
                 trafficLightCountElement.textContent = totalLights;
                 redLightCountElement.textContent = result.counts.red;
                 yellowLightCountElement.textContent = result.counts.yellow;
@@ -351,12 +436,14 @@
                     lastFpsUpdate = now;
                 }
                 
-                // Hide loading indicator
+                // Hide loading indicators
                 loadingIndicator.style.display = 'none';
+                processedLoadingIndicator.style.display = 'none';
             } catch (error) {
                 console.error('Error processing frame:', error);
                 showError(`Detection error: ${error.message}`);
                 loadingIndicator.style.display = 'none';
+                processedLoadingIndicator.style.display = 'none';
             }
             
             // Request the next frame with a slight delay to prevent overwhelming the browser
