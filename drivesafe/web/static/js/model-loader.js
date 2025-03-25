@@ -258,9 +258,14 @@ class ModelLoader {
      * @returns {Object} Detection results
      */
     async detectTrafficLights(videoElement) {
-        // If we're in simulation mode, just return simulated traffic lights
+        // If we're in simulation mode or model isn't ready, return empty results instead of simulating
         if (this.useSimulation || this.status !== STATUS.READY) {
-            return this.simulateTrafficLights();
+            // Return empty results instead of simulation to avoid false detections
+            return {
+                detections: [],
+                counts: { red: 0, yellow: 0, green: 0, unknown: 0 },
+                simulated: false
+            };
         }
         
         try {
@@ -277,8 +282,12 @@ class ModelLoader {
             }
         } catch (err) {
             console.error("Error during traffic light detection:", err);
-            // On any error, return simulated results
-            return this.simulateTrafficLights();
+            // On any error, return empty results instead of simulation
+            return {
+                detections: [],
+                counts: { red: 0, yellow: 0, green: 0, unknown: 0 },
+                simulated: false
+            };
         }
     }
     
@@ -316,60 +325,19 @@ class ModelLoader {
                 throw new Error(data.error || "Unknown server processing error");
             }
             
-            // Extract detection details - for now, using hardcoded values since server
-            // only does lane detection and not traffic light classification yet
+            // Extract detection details from server response
             const isTrafficLightVisible = false; // No traffic lights for now from server
             
-            // For simplicity, simulate some traffic light detection
-            // Random chance to detect a traffic light (adjust for demo purposes)
-            const detectChance = 0.1; // 10% chance
-            
-            let detections = [];
-            let counts = {
-                red: 0,
-                yellow: 0,
-                green: 0,
-                unknown: 0
-            };
-            
-            if (Math.random() < detectChance) {
-                // Randomly decide which color
-                const colorRand = Math.random();
-                let classId, color;
-                
-                if (colorRand < 0.5) {
-                    classId = 0; // Red
-                    counts.red = 1;
-                    color = "red";
-                } else if (colorRand < 0.8) {
-                    classId = 1; // Yellow
-                    counts.yellow = 1;
-                    color = "yellow";
-                } else {
-                    classId = 2; // Green
-                    counts.green = 1; 
-                    color = "green";
-                }
-                
-                // Position in top right (typical traffic light location)
-                const x1 = 0.7;
-                const y1 = 0.2;
-                const width = 0.08;
-                const height = 0.15;
-                
-                detections.push({
-                    box: [y1, x1, y1 + height, x1 + width],
-                    score: 0.75 + (Math.random() * 0.2), // 0.75-0.95
-                    class: classId
-                });
-                
-                console.log(`Detected ${color} traffic light (simulated from server)`);
-            }
-            
+            // Return empty results instead of simulation
             return {
-                detections,
-                counts,
-                simulated: false // Not actually simulated, but using server results
+                detections: [],
+                counts: {
+                    red: 0,
+                    yellow: 0,
+                    green: 0,
+                    unknown: 0
+                },
+                simulated: false
             };
             
         } catch (error) {
@@ -536,7 +504,7 @@ class ModelLoader {
             }
         }
         
-        // Return results or simulation if nothing was detected
+        // Return results or empty if nothing was detected
         if (detections.length === 0) {
             console.log("No detections found, returning empty results");
             // If nothing detected, return empty results
@@ -635,62 +603,6 @@ class ModelLoader {
     }
     
     /**
-     * Generate simulated traffic light detections
-     * for when the model isn't available or errors occur
-     */
-    simulateTrafficLights() {
-        // Instead of showing random positions for simulation,
-        // let's make a more controlled demo with just occasional detections
-        
-        // Only show a light 20% of the time, to avoid constant false detections
-        const shouldShowLight = Math.random() < 0.2;
-        
-        if (!shouldShowLight) {
-            return {
-                detections: [],
-                counts: { red: 0, yellow: 0, green: 0, unknown: 0 },
-                simulated: true
-            };
-        }
-        
-        // Show just one light for a more realistic demo
-        const detections = [];
-        const counts = { red: 0, yellow: 0, green: 0, unknown: 0 };
-        
-        // Fixed position in the upper right area (where traffic lights often are)
-        const x1 = 0.7;
-        const y1 = 0.2;
-        const width = 0.06;
-        const height = 0.15;
-        
-        // Random class (0=red, 1=yellow, 2=green) with preference for red
-        const rand = Math.random();
-        let classId;
-        if (rand < 0.5) {
-            classId = 0; // 50% red
-            counts.red = 1;
-        } else if (rand < 0.8) {
-            classId = 1; // 30% yellow
-            counts.yellow = 1;
-        } else {
-            classId = 2; // 20% green
-            counts.green = 1;
-        }
-        
-        detections.push({
-            box: [y1, x1, y1 + height, x1 + width],
-            score: 0.7 + (Math.random() * 0.2), // 0.7-0.9
-            class: classId
-        });
-        
-        return {
-            detections,
-            counts,
-            simulated: true // Flag to indicate these are simulated results
-        };
-    }
-    
-    /**
      * Draw bounding boxes on a canvas
      * 
      * @param {HTMLCanvasElement} canvas The canvas to draw on
@@ -700,8 +612,10 @@ class ModelLoader {
         const ctx = canvas.getContext('2d');
         const detections = detectionResult.detections;
         
-        // Clear the canvas (commenting this out since we're drawing on top of the video frame)
-        // ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // If no detections, just return without drawing anything
+        if (!detections || detections.length === 0) {
+            return;
+        }
         
         // Draw each detection
         detections.forEach(detection => {
@@ -747,15 +661,6 @@ class ModelLoader {
             ctx.fillStyle = 'black';
             ctx.fillText(`${label} ${(detection.score * 100).toFixed(0)}%`, x + 5, y - 5);
         });
-        
-        // Add a simulation indicator if these are simulated results
-        if (detectionResult.simulated) {
-            ctx.fillStyle = 'rgba(0,0,0,0.5)';
-            ctx.fillRect(10, 10, 180, 30);
-            ctx.fillStyle = 'white';
-            ctx.font = '14px Arial';
-            ctx.fillText('SIMULATION MODE (DEMO)', 20, 30);
-        }
     }
     
     /**
