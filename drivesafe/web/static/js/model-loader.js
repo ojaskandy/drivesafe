@@ -280,38 +280,47 @@ class ModelLoader {
                 return expanded.cast('int32');
             });
             
-            // Run model inference
+            // Run model inference with extensive error handling
             let result;
             try {
-                // Use the correct input format for TF.js SSD model
+                // First attempt: Use the image_tensor format commonly used by TF models
                 result = await this.model.executeAsync({'image_tensor': tensor});
+                console.log("Model execution successful with image_tensor format");
             } catch (execError) {
-                console.error("Model execution error:", execError);
+                console.error("Model execution error with image_tensor format:", execError);
                 
-                // Try alternate format for model input
+                // Second attempt: Try passing the tensor directly
                 try {
-                    console.log("Trying alternate model input format...");
-                    // Clean up first tensor
-                    tf.dispose(tensor);
+                    console.log("Trying direct tensor input...");
+                    result = await this.model.executeAsync(tensor);
+                    console.log("Model execution successful with direct tensor input");
+                } catch (directError) {
+                    console.error("Model execution error with direct tensor input:", directError);
                     
-                    // Create new tensor with different format - try the normalized 0-1 range version
-                    const altTensor = tf.tidy(() => {
-                        const pixels = tf.browser.fromPixels(videoElement);
-                        const resized = tf.image.resizeBilinear(pixels, [640, 480]);
-                        // Try without normalization
-                        return resized.expandDims(0);
-                    });
-                    
-                    // Try direct input without wrapping in object
-                    result = await this.model.executeAsync(altTensor);
-                    tf.dispose(altTensor);
-                } catch (altError) {
-                    console.error("Alternate model format also failed:", altError);
-                    return this.simulateTrafficLights();
+                    // Third attempt: Try with normalized tensor (0-1 range)
+                    try {
+                        console.log("Trying normalized tensor input...");
+                        // Clean up first tensor
+                        tf.dispose(tensor);
+                        
+                        const normalizedTensor = tf.tidy(() => {
+                            const pixels = tf.browser.fromPixels(videoElement);
+                            const resized = tf.image.resizeBilinear(pixels, [640, 480]);
+                            const normalized = resized.div(255.0);
+                            return normalized.expandDims(0);
+                        });
+                        
+                        result = await this.model.executeAsync(normalizedTensor);
+                        console.log("Model execution successful with normalized tensor");
+                        tf.dispose(normalizedTensor);
+                    } catch (normalizedError) {
+                        console.error("All model execution attempts failed:", normalizedError);
+                        return this.simulateTrafficLights();
+                    }
                 }
             }
             
-            // Process results - handle both YOLO format and SSD MobileNet format
+            // Process results - handle different possible output formats
             let detections = [];
             let counts = {
                 red: 0,
@@ -321,70 +330,72 @@ class ModelLoader {
             };
             
             try {
-                // Verify result is an array with expected elements
-                if (!Array.isArray(result) || result.length < 4 || !result[0] || !result[1] || !result[2] || !result[3]) {
-                    console.warn("Unexpected result format:", result);
-                    throw new Error("Unexpected result format");
-                }
+                // Log what we received to help with debugging
+                console.log("Model output format:", 
+                    Array.isArray(result) ? `Array of ${result.length} tensors` : typeof result);
                 
-                // Safely unpack the result
-                const [boxes, scores, classes, valid_detections] = result;
-                
-                // Convert tensors to arrays for easier use - check each is defined before calling arraySync
-                const boxesArray = boxes && boxes.arraySync ? boxes.arraySync()[0] : [];
-                const scoresArray = scores && scores.arraySync ? scores.arraySync()[0] : [];
-                const classesArray = classes && classes.arraySync ? classes.arraySync()[0] : [];
-                // Get the number of valid detections (default to 0 if undefined)
-                const validDetections = valid_detections && valid_detections.arraySync ? 
-                    valid_detections.arraySync()[0] : 0;
-                
-                // If we have valid detection data, process it
-                if (boxesArray && scoresArray && classesArray && validDetections) {
-                    // SSD MobileNet detects general objects, so we'll map some classes to traffic lights
-                    // Class 10 is traffic light in COCO dataset
-                    for (let i = 0; i < validDetections; i++) {
-                        if (scoresArray[i] > 0.4) { // Confidence threshold
-                            const classId = Math.floor(classesArray[i]);
-                            let mappedClass = 0; // Default to red light
-                            let confidence = scoresArray[i];
-                            
-                            // Class 10 in COCO is "traffic light"
-                            if (classId === 10) {
-                                // Simulate traffic light colors based on position
-                                // Top third of the light is red, middle is yellow, bottom is green
-                                const [y1, x1, y2, x2] = boxesArray[i];
-                                const height = y2 - y1;
-                                const centerY = y1 + (height / 2);
+                // Handle different possible result formats
+                if (Array.isArray(result)) {
+                    // Case 1: Standard TF.js detection model output [boxes, scores, classes, numDetections]
+                    if (result.length >= 4) {
+                        const boxesTensor = result[0];
+                        const scoresTensor = result[1];
+                        const classesTensor = result[2];
+                        const numDetectionsTensor = result[3];
+                        
+                        // Safely extract tensor data if available
+                        if (boxesTensor && scoresTensor && classesTensor && numDetectionsTensor) {
+                            // Check if these are actually tensors with arraySync method
+                            if (typeof boxesTensor.arraySync === 'function' &&
+                                typeof scoresTensor.arraySync === 'function' &&
+                                typeof classesTensor.arraySync === 'function' &&
+                                typeof numDetectionsTensor.arraySync === 'function') {
                                 
-                                if (centerY < 0.4) {
-                                    mappedClass = 0; // Red (top)
-                                    counts.red++;
-                                } else if (centerY < 0.6) {
-                                    mappedClass = 1; // Yellow (middle)
-                                    counts.yellow++;
-                                } else {
-                                    mappedClass = 2; // Green (bottom)
-                                    counts.green++;
+                                try {
+                                    // Extract data with extra validation
+                                    const boxesData = boxesTensor.arraySync();
+                                    const scoresData = scoresTensor.arraySync();
+                                    const classesData = classesTensor.arraySync();
+                                    const numDetections = numDetectionsTensor.arraySync()[0];  // Should be a scalar
+                                    
+                                    if (boxesData && boxesData[0] && scoresData && scoresData[0] && 
+                                        classesData && classesData[0] && 
+                                        typeof numDetections === 'number') {
+                                        
+                                        const boxesArray = boxesData[0];
+                                        const scoresArray = scoresData[0];
+                                        const classesArray = classesData[0];
+                                        
+                                        // Process detections if we have valid data
+                                        this.processDetections(
+                                            boxesArray, 
+                                            scoresArray, 
+                                            classesArray, 
+                                            numDetections, 
+                                            detections, 
+                                            counts
+                                        );
+                                    } else {
+                                        console.warn("Invalid array data in tensors");
+                                    }
+                                } catch (dataError) {
+                                    console.error("Error extracting tensor data:", dataError);
                                 }
-                                
-                                detections.push({
-                                    box: boxesArray[i], // [y1, x1, y2, x2] normalized coordinates
-                                    score: confidence,
-                                    class: mappedClass
-                                });
-                            } else if (classId === 1) { // Person (class 1 in COCO)
-                                // Just for demonstration
-                                counts.unknown++;
-                                detections.push({
-                                    box: boxesArray[i],
-                                    score: confidence,
-                                    class: 3 // Unknown class
-                                });
+                            } else {
+                                console.warn("One or more tensors missing arraySync method");
                             }
+                        } else {
+                            console.warn("One or more output tensors is null/undefined");
                         }
+                    } else {
+                        console.warn("Unexpected result format: Array with fewer than 4 elements");
                     }
-                } else {
-                    console.warn("Invalid detection data arrays");
+                } else if (result && typeof result === 'object') {
+                    // Case 2: Object format (some models output named properties)
+                    console.log("Object result format, properties:", Object.keys(result));
+                    
+                    // Here we could handle other known output formats
+                    // This is a placeholder for future expansion
                 }
             } catch (err) {
                 console.warn("Error processing model results:", err);
@@ -409,6 +420,7 @@ class ModelLoader {
             
             // Return results or simulation if nothing was detected
             if (detections.length === 0) {
+                console.log("No detections found, returning empty results");
                 // If nothing detected, return empty results
                 return {
                     detections: [],
@@ -426,6 +438,58 @@ class ModelLoader {
             console.error("Error during traffic light detection:", err);
             // On any error, return simulated results
             return this.simulateTrafficLights();
+        }
+    }
+    
+    /**
+     * Process detection data from model output tensors
+     */
+    processDetections(boxes, scores, classes, numDetections, detections, counts) {
+        // Process up to the number of valid detections
+        const validDetections = Math.min(numDetections, boxes.length);
+        
+        // SSD MobileNet detects general objects, so we'll map some classes to traffic lights
+        // Class 10 is traffic light in COCO dataset
+        for (let i = 0; i < validDetections; i++) {
+            if (scores[i] > 0.4) { // Confidence threshold
+                const classId = Math.floor(classes[i]);
+                let mappedClass = 0; // Default to red light
+                let confidence = scores[i];
+                
+                // Class 10 in COCO is "traffic light"
+                if (classId === 10) {
+                    // Simulate traffic light colors based on position
+                    // Top third of the light is red, middle is yellow, bottom is green
+                    const [y1, x1, y2, x2] = boxes[i];
+                    const height = y2 - y1;
+                    const centerY = y1 + (height / 2);
+                    
+                    if (centerY < 0.4) {
+                        mappedClass = 0; // Red (top)
+                        counts.red++;
+                    } else if (centerY < 0.6) {
+                        mappedClass = 1; // Yellow (middle)
+                        counts.yellow++;
+                    } else {
+                        mappedClass = 2; // Green (bottom)
+                        counts.green++;
+                    }
+                    
+                    detections.push({
+                        box: boxes[i], // [y1, x1, y2, x2] normalized coordinates
+                        score: confidence,
+                        class: mappedClass
+                    });
+                } else if (classId === 1) { // Person (class 1 in COCO)
+                    // Just for demonstration
+                    counts.unknown++;
+                    detections.push({
+                        box: boxes[i],
+                        score: confidence,
+                        class: 3 // Unknown class
+                    });
+                }
+            }
         }
     }
     
