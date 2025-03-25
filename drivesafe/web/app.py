@@ -6,12 +6,7 @@ import numpy as np
 from datetime import datetime
 import sys
 from werkzeug.utils import secure_filename
-
-# Add the parent directory to Python path
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from models import Darknet
-from utils.utils import non_max_suppression, scale_coords
-from utils.datasets import letterbox
+from ultralytics import YOLO
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'static', 'uploads')
@@ -22,9 +17,8 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Initialize model
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = Darknet(None)  # Passing None as we're using a simplified model for testing
-model.to(device)
-model.eval()
+model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models', 'traffic_light', 'best_traffic_small_yolo.pt')
+model = YOLO(model_path)
 
 # Class names
 class_names = ['red', 'yellow', 'green', 'off', 'person', 'lane']
@@ -52,51 +46,46 @@ def release_camera():
     is_detecting = False
 
 def detect_objects(frame):
-    # Preprocess frame
-    img = letterbox(frame, new_shape=416)[0]
-    img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB
-    img = np.ascontiguousarray(img)
-    img = torch.from_numpy(img).float().to(device)
-    img /= 255.0
-    if img.ndimension() == 3:
-        img = img.unsqueeze(0)
-
     # Run inference
-    with torch.no_grad():
-        detections = model(img)
-        detections = non_max_suppression(detections, 0.3, 0.5)
-
+    results = model(frame, conf=0.25)
+    
     # Process detections
-    results = []
-    if detections[0] is not None:
-        # Rescale boxes to original image
-        detections = scale_coords(img.shape[2:], detections[0], frame.shape).round()
-        
-        for x1, y1, x2, y2, conf, cls_pred in detections:
-            # Get class label
-            label = class_names[int(cls_pred)]
+    processed_frame = frame.copy()
+    detections = []
+    
+    # Process traffic light detections
+    for r in results:
+        boxes = r.boxes
+        for box in boxes:
+            # Get box coordinates
+            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+            cls = int(box.cls[0])
+            conf = float(box.conf[0])
+            
+            # Get class name and color
+            class_name = r.names[cls].lower()
             
             # Add detection to results
-            results.append({
-                'label': label,
-                'confidence': float(conf),
+            detections.append({
+                'label': class_name,
+                'confidence': conf,
                 'bbox': [int(x1), int(y1), int(x2), int(y2)]
             })
             
-            # Draw bounding box
+            # Draw detection box
             color = (0, 255, 0)  # Default green
-            if label == 'red':
+            if 'red' in class_name:
                 color = (0, 0, 255)  # Red
-            elif label == 'yellow':
+            elif 'yellow' in class_name:
                 color = (0, 255, 255)  # Yellow
-            elif label == 'person':
+            elif 'person' in class_name:
                 color = (255, 0, 0)  # Blue
             
-            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
-            cv2.putText(frame, f'{label} {conf:.2f}', (int(x1), int(y1)-10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            cv2.rectangle(processed_frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+            cv2.putText(processed_frame, f'{class_name} {conf:.2f}',
+                      (int(x1), int(y1)-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-    return frame, results
+    return processed_frame, detections
 
 def generate_frames():
     global is_detecting
